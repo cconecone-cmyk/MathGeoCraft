@@ -255,7 +255,7 @@
     btnToggleBg.classList.remove('btn-secondary');
     btnToggleBg.classList.add('btn-primary');
     bgToggleText.textContent = '隱藏底圖';
-    showToast('✨ 截圖已貼上！拿起【智慧手繪筆】直接在圖上畫線描摹！');
+    showToast('✨ 截圖已貼上！點擊上方【⚡ 一鍵辨識底圖】秒級自動生成幾何圖形！', 4000);
   }
 
   window.addEventListener('paste', (e) => {
@@ -1255,6 +1255,426 @@
     updateSelectionState();
     render();
     showToast('🗑️ 已刪除所選物件');
+  }
+
+  // ==========================================
+  // 純前端幾何影像自動辨識引擎 (100% Client-Side CV)
+  // 零 API、零外傳、純瀏覽器本地 WebAssembly/Canvas 運算
+  // ==========================================
+  const btnAutoDetect = document.getElementById('btn-auto-detect');
+  const btnAutoDetectSide = document.getElementById('btn-auto-detect-side');
+
+  if (btnAutoDetect) btnAutoDetect.addEventListener('click', triggerAutoDetect);
+  if (btnAutoDetectSide) btnAutoDetectSide.addEventListener('click', triggerAutoDetect);
+
+  function triggerAutoDetect() {
+    if (!state.bgImage.src || !bgImg.src) {
+      showToast('⚠️ 請先按 Ctrl+V 貼上題目截圖，再執行一鍵自動辨識！', 3500);
+      return;
+    }
+
+    showToast('⚡ 正在執行純前端電腦視覺分析...', 2000);
+
+    // 稍微延遲讓 UI toast 顯示
+    setTimeout(() => {
+      runAutoVectorization();
+    }, 40);
+  }
+
+  function runAutoVectorization() {
+    const naturalW = bgImg.naturalWidth || 800;
+    const naturalH = bgImg.naturalHeight || 600;
+    if (naturalW === 0 || naturalH === 0) {
+      showToast('⚠️ 圖片尚未完全載入，請稍候再試');
+      return;
+    }
+
+    const memCanvas = document.createElement('canvas');
+    memCanvas.width = naturalW;
+    memCanvas.height = naturalH;
+    const memCtx = memCanvas.getContext('2d');
+    memCtx.drawImage(bgImg, 0, 0);
+
+    // 判斷 OpenCV 是否就緒
+    if (typeof cv !== 'undefined' && cv.Mat) {
+      try {
+        runOpenCvDetection(memCanvas, naturalW, naturalH);
+      } catch (err) {
+        console.warn('OpenCV 辨識出錯，切換至純 JS 引擎:', err);
+        runPureJsDetection(memCanvas, naturalW, naturalH);
+      }
+    } else {
+      runPureJsDetection(memCanvas, naturalW, naturalH);
+    }
+  }
+
+  function runOpenCvDetection(canvas, imgW, imgH) {
+    let src = cv.imread(canvas);
+    let gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // 高斯微模糊降低印刷網點雜訊
+    let blurred = new cv.Mat();
+    cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0);
+
+    // 自適應二值化 (深色墨水線條變成白色 255，白色紙張變成黑色 0)
+    let thresh = new cv.Mat();
+    cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 8);
+
+    // 形態學小閉運算 (3x3) 縫合細微斷裂
+    let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+    let morph = new cv.Mat();
+    cv.morphologyEx(thresh, morph, cv.MORPH_CLOSE, kernel);
+
+    const detectedLines = [];
+    const detectedCircles = [];
+
+    // 1. 尋找輪廓 (多邊形外框)
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+    cv.findContours(morph, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+    for (let i = 0; i < contours.size(); ++i) {
+      let cnt = contours.get(i);
+      let peri = cv.arcLength(cnt, true);
+      // 過濾細碎雜訊與單個英文字母 (周長 > 80 像素)
+      if (peri > 80) {
+        let approx = new cv.Mat();
+        cv.approxPolyDP(cnt, approx, 0.028 * peri, true);
+        const numPts = approx.rows;
+        if (numPts >= 3 && numPts <= 10) {
+          const pts = [];
+          for (let j = 0; j < numPts; j++) {
+            pts.push({
+              x: approx.data32S[j * 2],
+              y: approx.data32S[j * 2 + 1]
+            });
+          }
+          for (let j = 0; j < numPts; j++) {
+            const p1 = pts[j];
+            const p2 = pts[(j + 1) % numPts];
+            detectedLines.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+          }
+        }
+        approx.delete();
+      }
+      cnt.delete();
+    }
+
+    // 2. 霍夫直線變換 (提取內部線條、高、對角線等)
+    let linesMat = new cv.Mat();
+    cv.HoughLinesP(thresh, linesMat, 1, Math.PI / 180, 28, 30, 15);
+    for (let i = 0; i < linesMat.rows; ++i) {
+      detectedLines.push({
+        x1: linesMat.data32S[i * 4],
+        y1: linesMat.data32S[i * 4 + 1],
+        x2: linesMat.data32S[i * 4 + 2],
+        y2: linesMat.data32S[i * 4 + 3]
+      });
+    }
+
+    // 3. 霍夫圓變換
+    let circlesMat = new cv.Mat();
+    try {
+      cv.HoughCircles(blurred, circlesMat, cv.HOUGH_GRADIENT, 1, 35, 100, 32, 18, Math.floor(Math.min(imgW, imgH) / 2));
+      for (let i = 0; i < circlesMat.cols; ++i) {
+        const cx = circlesMat.data32F[i * 3];
+        const cy = circlesMat.data32F[i * 3 + 1];
+        const r = circlesMat.data32F[i * 3 + 2];
+        if (r >= 16) {
+          detectedCircles.push({ cx, cy, r });
+        }
+      }
+    } catch (e) {
+      console.warn('Circles error:', e);
+    }
+
+    // 釋放記憶體
+    src.delete();
+    gray.delete();
+    blurred.delete();
+    thresh.delete();
+    kernel.delete();
+    morph.delete();
+    contours.delete();
+    hierarchy.delete();
+    linesMat.delete();
+    circlesMat.delete();
+
+    processAndApplyGeometry(detectedLines, detectedCircles, imgW, imgH);
+  }
+
+  function runPureJsDetection(canvas, imgW, imgH) {
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0, 0, imgW, imgH);
+    const data = imgData.data;
+
+    // 二值化二維陣列
+    const binary = new Uint8Array(imgW * imgH);
+    for (let i = 0; i < data.length; i += 4) {
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      binary[i / 4] = lum < 165 ? 1 : 0;
+    }
+
+    // 水平與垂直投影找出幾何圖形實質範圍
+    let minX = imgW, maxX = 0, minY = imgH, maxY = 0;
+    for (let y = 0; y < imgH; y++) {
+      for (let x = 0; x < imgW; x++) {
+        if (binary[y * imgW + x] === 1) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    const detectedLines = [];
+    const detectedCircles = [];
+
+    // 若圖片有內容
+    if (maxX > minX + 20 && maxY > minY + 20) {
+      // 網格採樣提取骨幹直線
+      const step = Math.max(8, Math.floor(Math.min(imgW, imgH) / 60));
+      for (let y = minY; y <= maxY; y += step) {
+        let runStart = -1;
+        for (let x = minX; x <= maxX; x++) {
+          if (binary[y * imgW + x] === 1) {
+            if (runStart === -1) runStart = x;
+          } else {
+            if (runStart !== -1) {
+              if (x - runStart > 35) {
+                detectedLines.push({ x1: runStart, y1: y, x2: x, y2: y });
+              }
+              runStart = -1;
+            }
+          }
+        }
+      }
+
+      for (let x = minX; x <= maxX; x += step) {
+        let runStart = -1;
+        for (let y = minY; y <= maxY; y++) {
+          if (binary[y * imgW + x] === 1) {
+            if (runStart === -1) runStart = y;
+          } else {
+            if (runStart !== -1) {
+              if (y - runStart > 35) {
+                detectedLines.push({ x1: x, y1: runStart, x2: x, y2: y });
+              }
+              runStart = -1;
+            }
+          }
+        }
+      }
+    }
+
+    processAndApplyGeometry(detectedLines, detectedCircles, imgW, imgH);
+  }
+
+  function processAndApplyGeometry(rawLines, rawCircles, naturalW, naturalH) {
+    const stageW = 800;
+    const stageH = 600;
+
+    const imgAspect = naturalW / naturalH;
+    const stageAspect = stageW / stageH;
+
+    let renderedW, renderedH, offsetX, offsetY;
+    if (imgAspect > stageAspect) {
+      renderedW = stageW;
+      renderedH = stageW / imgAspect;
+      offsetX = 0;
+      offsetY = (stageH - renderedH) / 2;
+    } else {
+      renderedH = stageH;
+      renderedW = stageH * imgAspect;
+      offsetY = 0;
+      offsetX = (stageW - renderedW) / 2;
+    }
+
+    function mapPt(px, py) {
+      return {
+        x: Math.round(offsetX + (px / naturalW) * renderedW),
+        y: Math.round(offsetY + (py / naturalH) * renderedH)
+      };
+    }
+
+    // 1. 端點聚類 (以 16px 為半徑，相鄰端點合併為同一個頂點)
+    const clusterDist = 16;
+    const newVertices = [];
+
+    function findOrCreateVertex(px, py) {
+      const pt = mapPt(px, py);
+      for (const v of newVertices) {
+        if (Math.hypot(v.x - pt.x, v.y - pt.y) <= clusterDist) {
+          // 微調重心
+          v.x = Math.round((v.x + pt.x) / 2);
+          v.y = Math.round((v.y + pt.y) / 2);
+          return v;
+        }
+      }
+      const v = {
+        id: generateId('v'),
+        x: pt.x,
+        y: pt.y,
+        label: '',
+        labelOffset: { dx: 12, dy: -12 }
+      };
+      newVertices.push(v);
+      return v;
+    }
+
+    // 2. 建立線段
+    const newSegments = [];
+    const edgeSet = new Set();
+
+    rawLines.forEach(l => {
+      const pt1 = mapPt(l.x1, l.y1);
+      const pt2 = mapPt(l.x2, l.y2);
+      const segLen = Math.hypot(pt2.x - pt1.x, pt2.y - pt1.y);
+      if (segLen < 22) return; // 濾掉小短筆劃/字母干擾
+
+      const v1 = findOrCreateVertex(l.x1, l.y1);
+      const v2 = findOrCreateVertex(l.x2, l.y2);
+      if (v1.id === v2.id) return;
+
+      const key = v1.id < v2.id ? `${v1.id}_${v2.id}` : `${v2.id}_${v1.id}`;
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        newSegments.push({
+          id: generateId('seg'),
+          v1Id: v1.id,
+          v2Id: v2.id,
+          style: 'solid',
+          label: '',
+          ticks: 0
+        });
+      }
+    });
+
+    // 3. 處理圓形
+    const newCircles = [];
+    rawCircles.forEach(c => {
+      const centerPt = mapPt(c.cx, c.cy);
+      const scale = renderedW / naturalW;
+      const r = Math.round(c.r * scale);
+      if (r < 15) return;
+
+      // 檢查是否已有接近的頂點做為圓心
+      let centerV = newVertices.find(v => Math.hypot(v.x - centerPt.x, v.y - centerPt.y) <= clusterDist);
+      if (!centerV) {
+        centerV = {
+          id: generateId('v'),
+          x: centerPt.x,
+          y: centerPt.y,
+          label: 'O',
+          labelOffset: { dx: 10, dy: -10 }
+        };
+        newVertices.push(centerV);
+      } else if (!centerV.label) {
+        centerV.label = 'O';
+      }
+
+      newCircles.push({
+        id: generateId('circle'),
+        centerId: centerV.id,
+        radius: r,
+        style: 'solid'
+      });
+    });
+
+    if (newVertices.length === 0 && newCircles.length === 0) {
+      showToast('⚠️ 未在截圖中偵測到清晰幾何線條，請確認截圖是否包含線條');
+      return;
+    }
+
+    // 4. 水平與垂直吸附 (若線段接近水平/垂直，正交化)
+    newSegments.forEach(s => {
+      const v1 = newVertices.find(v => v.id === s.v1Id);
+      const v2 = newVertices.find(v => v.id === s.v2Id);
+      if (v1 && v2) {
+        if (Math.abs(v1.y - v2.y) <= 5) {
+          v2.y = v1.y;
+        }
+        if (Math.abs(v1.x - v2.x) <= 5) {
+          v2.x = v1.x;
+        }
+      }
+    });
+
+    // 5. 頂點依空間位置排序並自動命名 A, B, C, D...
+    // 圓心 O 保持為 O，其餘頂點由上到下、由左到右
+    const nonCenterVertices = newVertices.filter(v => v.label !== 'O');
+    nonCenterVertices.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 25) return a.y - b.y;
+      return a.x - b.x;
+    });
+
+    let letterIdx = 0;
+    nonCenterVertices.forEach(v => {
+      if (letterIdx < ALPHABET.length) {
+        v.label = ALPHABET[letterIdx++];
+      }
+    });
+
+    // 6. 自動偵測直角標記 (Right Angle Marks)
+    const newMarkers = [];
+    newVertices.forEach(v => {
+      const connectedSegs = newSegments.filter(s => s.v1Id === v.id || s.v2Id === v.id);
+      if (connectedSegs.length >= 2) {
+        for (let i = 0; i < connectedSegs.length; i++) {
+          for (let j = i + 1; j < connectedSegs.length; j++) {
+            const s1 = connectedSegs[i];
+            const s2 = connectedSegs[j];
+            const other1Id = s1.v1Id === v.id ? s1.v2Id : s1.v1Id;
+            const other2Id = s2.v1Id === v.id ? s2.v2Id : s2.v1Id;
+            const o1 = newVertices.find(vert => vert.id === other1Id);
+            const o2 = newVertices.find(vert => vert.id === other2Id);
+            if (!o1 || !o2) continue;
+
+            const u = { x: o1.x - v.x, y: o1.y - v.y };
+            const vVec = { x: o2.x - v.x, y: o2.y - v.y };
+            const lenU = Math.hypot(u.x, u.y);
+            const lenV = Math.hypot(vVec.x, vVec.y);
+            if (lenU > 0 && lenV > 0) {
+              const cosTheta = (u.x * vVec.x + u.y * vVec.y) / (lenU * lenV);
+              // 如果夾角在 85° ~ 95° 之間 (|cos| <= 0.08)
+              if (Math.abs(cosTheta) <= 0.08) {
+                newMarkers.push({
+                  id: generateId('mk'),
+                  type: 'right-angle',
+                  vertexId: v.id,
+                  v1Id: o1.id,
+                  v2Id: o2.id,
+                  label: ''
+                });
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // 7. 更新狀態並渲染
+    pushHistory();
+    state.vertices = newVertices;
+    state.segments = newSegments;
+    state.circles = newCircles;
+    state.markers = newMarkers;
+    state.shadings = [];
+
+    // 切換至選取工具，方便老師立即拖曳微調
+    state.activeTool = 'select';
+    toolBtns.forEach(btn => {
+      if (btn.dataset.tool === 'select') {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    render();
+    showToast(`⚡ 辨識成功！自動生成 ${newVertices.length} 個頂點、${newSegments.length} 條線段${newCircles.length > 0 ? `、${newCircles.length} 個圓` : ''}！切換至選取工具可直接拖曳調整！`, 4500);
   }
 
   // ==========================================

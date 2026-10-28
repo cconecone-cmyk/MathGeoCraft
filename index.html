@@ -12,6 +12,8 @@
   <link rel="stylesheet" href="style.css">
   <!-- 本地免連網 docx 產生庫 -->
   <script src="vendor/docx.umd.js"></script>
+  <!-- 純前端開源電腦視覺庫 OpenCV.js (WebAssembly 離線運算，100% 免 API、零外傳) -->
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js" id="opencv-script"></script>
 </head>
 <body>
   <div id="app" class="app-container">
@@ -27,12 +29,17 @@
       
       <!-- 快速動作按鈕區 -->
       <div class="action-bar">
-        <!-- 顯眼的操作工具：復原與刪除 -->
+        <!-- 顯眼的操作工具：一鍵本機自動辨識 -->
+        <button id="btn-auto-detect" class="btn btn-auto-detect" title="【⚡ 一鍵本機自動辨識】100% 免 API、瀏覽器本機電腦視覺秒讀截圖，自動生成幾何頂點、線段與圓形！">
+          <span class="icon">⚡</span> <b>一鍵辨識底圖</b>
+        </button>
+
+        <!-- 復原與刪除 -->
         <button id="btn-undo-top" class="btn btn-action-undo" title="快捷鍵：[Ctrl + Z] 復原上一步">
-          <span class="icon">↩️</span> <b>復原 (Undo)</b>
+          <span class="icon">↩️</span> <b>復原</b>
         </button>
         <button id="btn-delete-top" class="btn btn-action-delete" title="快捷鍵：[Delete] 刪除選取的物件" disabled>
-          <span class="icon">🗑️</span> <b>刪除選取</b>
+          <span class="icon">🗑️</span> <b>刪除</b>
         </button>
         <div class="action-divider"></div>
 
@@ -164,7 +171,10 @@
 
         <!-- 底圖控制 -->
         <div class="panel-section">
-          <div class="section-title">底圖墊圖控制</div>
+          <div class="section-title">底圖墊圖與自動辨識</div>
+          <button id="btn-auto-detect-side" class="btn btn-auto-detect-side mb-2" title="自動掃描底圖並生成幾何頂點、線段與圓形">
+            <span class="icon">⚡</span> <b>一鍵辨識底圖 (免 API)</b>
+          </button>
           <div class="control-row">
             <label for="bg-opacity-slider">透明度：<span id="opacity-val">45%</span></label>
             <input type="range" id="bg-opacity-slider" min="0" max="100" value="45">
@@ -203,9 +213,9 @@
             <p>或將圖片拖曳至此處，或 <label for="file-input" class="upload-link">從電腦選取檔案</label></p>
             <input type="file" id="file-input" accept="image/*" style="display:none;">
             <div class="hero-tips">
-              <span class="tip-pill">✨ 100% 瀏覽器本地運算</span>
-              <span class="tip-pill">✨ 免註冊、免 API Key</span>
-              <span class="tip-pill">✨ 一鍵匯出 Word 試卷檔</span>
+              <span class="tip-pill">⚡ 100% 純前端離線電腦視覺自動辨識</span>
+              <span class="tip-pill">🔒 零 API、零外傳、隱私 100% 安全</span>
+              <span class="tip-pill">📄 一鍵匯出 Word 試卷檔 (.docx)</span>
             </div>
           </div>
         </div>
