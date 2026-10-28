@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MathGeoCraft 幾何神器 - 課本習作圖形復刻與 Word 產生器</title>
-  <meta name="description" content="專為數學老師打造的開源幾何工具：貼上截圖當底圖，秒級復刻課本習作高解析圖檔 (PNG) 與 Word 試卷檔 (.docx)。">
+  <title>MathGeoCraft 幾何神器 - 題目截圖秒轉 Word 可編輯向量圖</title>
+  <meta name="description" content="專為數學老師打造：貼上幾何題目截圖，AI 深度識別幾何關係，一鍵輸出 Word 原生可編輯向量圖 (.docx / .svg) 與課本印刷級高解析圖。">
   <!-- 字型：載入 KaTeX / Times New Roman 風格數學字型 -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,8 +12,6 @@
   <link rel="stylesheet" href="style.css">
   <!-- 本地免連網 docx 產生庫 -->
   <script src="vendor/docx.umd.js"></script>
-  <!-- 純前端開源電腦視覺庫 OpenCV.js (WebAssembly 離線運算，100% 免 API、零外傳) -->
-  <script async src="https://docs.opencv.org/4.8.0/opencv.js" id="opencv-script"></script>
 </head>
 <body>
   <div id="app" class="app-container">
@@ -22,297 +20,188 @@
       <div class="brand-section">
         <div class="logo-icon">📐</div>
         <div class="brand-text">
-          <h1>MathGeoCraft <span class="badge">課本幾何復刻神器</span></h1>
-          <p class="sub-title">貼上截圖 (Ctrl+V) → 秒級精準描摹 → 匯出課本印刷風 PNG &amp; Word 試卷檔</p>
+          <h1>MathGeoCraft <span class="badge">AI 幾何轉 Word 神器</span></h1>
+          <p class="sub-title">題目截圖 (Ctrl+V) → AI 深度讀懂幾何關係 → 輸出 Word 原生可編輯形狀 (.docx / SVG)</p>
         </div>
       </div>
       
       <!-- 快速動作按鈕區 -->
       <div class="action-bar">
-        <!-- 顯眼的操作工具：一鍵本機自動辨識 -->
-        <button id="btn-auto-detect" class="btn btn-auto-detect" title="【⚡ 一鍵本機自動辨識】100% 免 API、瀏覽器本機電腦視覺秒讀截圖，自動生成幾何頂點、線段與圓形！">
-          <span class="icon">⚡</span> <b>一鍵辨識底圖</b>
+        <button id="btn-export-docx" class="btn btn-accent" title="一鍵打包產生包含原生可編輯向量圖與試卷排版的 Word 檔">
+          <span class="icon">📄</span> <b>下載 Word 可編輯檔 (.docx)</b>
         </button>
-
-        <!-- 復原與刪除 -->
-        <button id="btn-undo-top" class="btn btn-action-undo" title="快捷鍵：[Ctrl + Z] 復原上一步">
-          <span class="icon">↩️</span> <b>復原</b>
+        <button id="btn-export-svg" class="btn btn-primary" title="匯出純向量 SVG，拖進 Word 點右鍵「轉換成圖形」即可原生編輯">
+          <span class="icon">📐</span> 下載 SVG 向量檔
         </button>
-        <button id="btn-delete-top" class="btn btn-action-delete" title="快捷鍵：[Delete] 刪除選取的物件" disabled>
-          <span class="icon">🗑️</span> <b>刪除</b>
-        </button>
-        <div class="action-divider"></div>
-
-        <button id="btn-toggle-bg" class="btn btn-secondary" title="快捷鍵：空白鍵 [Space] 切換顯示/隱藏底圖">
-          <span class="icon">👁️</span> <span id="bg-toggle-text">隱藏底圖</span>
-        </button>
-        <button id="btn-copy-png" class="btn btn-secondary" title="直接複製高解析圖到剪貼簿，切到 Word 即可貼上">
+        <button id="btn-copy-png" class="btn btn-secondary" title="直接複製 300+ DPI 課本印刷級高解析圖到剪貼簿，切到 Word 即可貼上">
           <span class="icon">📋</span> 複製圖片
         </button>
-        <button id="btn-export-png" class="btn btn-primary" title="匯出 300+ DPI 教科書印刷級高解析圖檔">
+        <button id="btn-export-png" class="btn btn-secondary" title="匯出 300+ DPI 高解析圖檔">
           <span class="icon">🖼️</span> 下載 PNG
         </button>
-        <button id="btn-export-svg" class="btn btn-secondary" title="匯出純向量 SVG，拖進 Word 可一鍵轉為原生形狀">
-          <span class="icon">📐</span> 下載 SVG
-        </button>
-        <button id="btn-export-docx" class="btn btn-accent" title="一鍵打包產生包含試題排版與幾何圖的 Word 檔">
-          <span class="icon">📄</span> 產生 Word 檔 (.docx)
-        </button>
-        <button id="btn-help" class="btn btn-ghost" title="快捷鍵與說明">
-          <span class="icon">❓</span>
+        <button id="btn-settings-toggle" class="btn btn-ghost" title="Google Gemini API Key 設定">
+          <span class="icon">⚙️</span> API 設定
         </button>
       </div>
     </header>
 
-    <!-- 主工作區 -->
-    <main class="workspace">
-      <!-- 左側：工具列與樣板 -->
-      <aside class="sidebar-left">
-        <!-- 核心繪圖工具：智慧手繪筆自動校正 -->
-        <div class="panel-section">
-          <div class="section-title">✨ 智慧手繪筆 (隨手畫自動校正)</div>
-          <div class="tool-grid">
-            <button class="tool-btn active" data-tool="magic-pen" title="【魔法實線筆】在截圖上隨手畫線或多邊形，放開滑鼠自動校正成教科書標準實線！">
-              <span class="tool-icon">🪄</span>
-              <span class="tool-name">智慧實線筆</span>
-            </button>
-            <button class="tool-btn" data-tool="magic-dashed" title="【魔法虛線筆】隨手畫輔助線，放開滑鼠自動校正成課本虛線！">
-              <span class="tool-icon">╌</span>
-              <span class="tool-name">智慧虛線筆</span>
-            </button>
-            <button class="tool-btn" data-tool="select" title="【選取微調】大感應熱區！拖曳頂點自由拉長縮短或移動幾何圖形 (V)">
-              <span class="tool-icon">👆</span>
-              <span class="tool-name">選取微調 (V)</span>
-            </button>
-            <button class="tool-btn" data-tool="circle" title="【圓形】以圓心拖曳產生圓形，圓周有把手可隨意縮放 (C)">
-              <span class="tool-icon">⭕</span>
-              <span class="tool-name">圓形 (C)</span>
-            </button>
-            <button class="tool-btn" data-tool="right-angle" title="點選頂點及兩邊加入課本標準直角折角 (R)">
-              <span class="tool-icon">∟</span>
-              <span class="tool-name">直角記號 (R)</span>
-            </button>
-            <button class="tool-btn" data-tool="angle-arc" title="點選三點加入角度圓弧與角度標記 (A)">
-              <span class="tool-icon">⌒</span>
-              <span class="tool-name">角度圓弧 (A)</span>
-            </button>
-            <button class="tool-btn" data-tool="shading" title="順時針點選頂點包圍幾何陰影區域">
-              <span class="tool-icon">▦</span>
-              <span class="tool-name">陰影鋪色</span>
-            </button>
+    <!-- 主工作區：左側輸入與辨識，右側高品質預覽與匯出 -->
+    <main class="workspace-split">
+      
+      <!-- ================= 左欄：題目截圖輸入與 AI 控制 ================= -->
+      <section class="panel-left">
+        
+        <!-- 截圖輸入區 (支援貼上、拖放、點選) -->
+        <div class="input-card">
+          <div class="card-header">
+            <span class="card-title">📸 1. 貼上題目截圖</span>
+            <span class="card-badge">按下 Ctrl + V 立即貼上</span>
           </div>
-        </div>
-
-        <!-- GeoGebra 尺規建構工具 -->
-        <div class="panel-section">
-          <div class="section-title">📐 GeoGebra 幾何建構</div>
-          <div class="tool-grid">
-            <button class="tool-btn" data-tool="perpendicular" title="【過點垂線】點選頂點與對邊線段，自動作高並標註直角">
-              <span class="tool-icon">⊥</span>
-              <span class="tool-name">過點垂線 (高)</span>
-            </button>
-            <button class="tool-btn" data-tool="bisector" title="【垂直平分線】點選線段，自動求中點並作中垂線">
-              <span class="tool-icon">⫾</span>
-              <span class="tool-name">中垂線 (平分)</span>
-            </button>
-            <button class="tool-btn" data-tool="angle-bisector" title="【角平分線】依序點選頂點與兩邊，作角平分線">
-              <span class="tool-icon">∠</span>
-              <span class="tool-name">角平分線</span>
-            </button>
-            <button class="tool-btn" data-tool="parallel" title="【平行線】點選頂點與參考線段，作過該點之平行線">
-              <span class="tool-icon">∥</span>
-              <span class="tool-name">平行線</span>
-            </button>
-            <button class="tool-btn" data-tool="tangent" title="【圓切線】點選圓外點與圓形，自動作圓之切線">
-              <span class="tool-icon">⊙</span>
-              <span class="tool-name">圓切線</span>
-            </button>
-            <button class="tool-btn" data-tool="midpoint" title="【幾何中點】點選線段，自動標出精確中點">
-              <span class="tool-icon">·</span>
-              <span class="tool-name">標出中點</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- 國中課本與會考最高頻幾何樣板 (一鍵貼入對齊) -->
-        <div class="panel-section">
-          <div class="section-title">國中課本最高頻圖形 (點擊即用)</div>
           
-          <div class="preset-category-label">🔥 相似形與比例 (九年級)</div>
-          <div class="template-grid mb-2">
-            <button class="preset-btn" data-preset="similar-a" title="【出題率 No.1】A 字形平行截線 (DE // BC)">A 字相似形</button>
-            <button class="preset-btn" data-preset="similar-hourglass" title="【出題率 No.2】8 字形 / 沙漏形交叉相似">8 字沙漏相似</button>
-            <button class="preset-btn" data-preset="right-altitude" title="母子相似定理 (直角三角形斜邊上的高)">母子相似定理</button>
-          </div>
+          <div id="dropzone" class="dropzone">
+            <!-- 尚未貼上截圖時 -->
+            <div id="dropzone-empty" class="dropzone-empty">
+              <div class="drop-icon">📋</div>
+              <h3>在網頁任意處按下 <kbd>Ctrl</kbd> + <kbd>V</kbd></h3>
+              <p>或將幾何題目圖片拖曳至此處，或 <label for="file-input" class="upload-link">從電腦選取檔案</label></p>
+              <input type="file" id="file-input" accept="image/*" style="display:none;">
+            </div>
 
-          <div class="preset-category-label">⭕ 圓形單元高頻 (九年級)</div>
-          <div class="template-grid mb-2">
-            <button class="preset-btn" data-preset="chord-distance" title="【段考必考】垂徑定理與弦心距 (直角 △OMA)">弦心距直角△</button>
-            <button class="preset-btn" data-preset="tangent-kite" title="圓外一點作兩切線 (鳶形 PAOB)">圓外雙切線</button>
-            <button class="preset-btn" data-preset="inscribed-angle" title="圓心角與圓周角關係 (同弧兩倍角)">圓心角與圓周角</button>
-            <button class="preset-btn" data-preset="cyclic-quad" title="圓內接四邊形 (對角互補)">圓內接四邊形</button>
-          </div>
-
-          <div class="preset-category-label">📐 畢氏定理與全等 (八年級)</div>
-          <div class="template-grid mb-2">
-            <button class="preset-btn" data-preset="right-triangle" title="標準畢氏定理直角三角形 (附 90° 標記)">畢氏直角△</button>
-            <button class="preset-btn" data-preset="isosceles-triangle" title="等腰三角形 (高線垂直平分底邊)">等腰△與高</button>
-            <button class="preset-btn" data-preset="angle-bisector-dist" title="角平分線性質 (到兩邊等距離垂線)">角平分線性質</button>
-            <button class="preset-btn" data-preset="equilateral-triangle" title="正三角形 (三邊等長標記)">正三角形</button>
-          </div>
-
-          <div class="preset-category-label">▱ 特殊四邊形與坐標</div>
-          <div class="template-grid">
-            <button class="preset-btn" data-preset="parallelogram" title="平行四邊形 (含高線與對角線)">平行四邊形</button>
-            <button class="preset-btn" data-preset="trapezoid" title="等腰梯形 (含兩條垂直高線)">等腰梯形</button>
-            <button class="preset-btn" data-preset="coordinate-axis" title="直角坐標平面 (含原點 O 與箭頭)">直角坐標系</button>
-          </div>
-        </div>
-
-        <!-- 底圖控制 -->
-        <div class="panel-section">
-          <div class="section-title">底圖墊圖與自動辨識</div>
-          <button id="btn-auto-detect-side" class="btn btn-auto-detect-side mb-2" title="自動掃描底圖並生成幾何頂點、線段與圓形">
-            <span class="icon">⚡</span> <b>一鍵辨識底圖 (免 API)</b>
-          </button>
-          <div class="control-row">
-            <label for="bg-opacity-slider">透明度：<span id="opacity-val">45%</span></label>
-            <input type="range" id="bg-opacity-slider" min="0" max="100" value="45">
-          </div>
-          <div class="control-actions">
-            <button id="btn-fit-bg" class="btn btn-sm btn-secondary">適配畫布</button>
-            <button id="btn-clear-bg" class="btn btn-sm btn-danger">清除底圖</button>
-          </div>
-        </div>
-
-        <!-- 智慧吸附設定 -->
-        <div class="panel-section">
-          <div class="section-title">繪圖輔助選項</div>
-          <label class="checkbox-label">
-            <input type="checkbox" id="chk-snap" checked>
-            <span>🧲 幾何智慧吸附 (水平/垂直/90°)</span>
-          </label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="chk-auto-label" checked>
-            <span>🔤 頂點自動命名 ($A, B, C\dots$)</span>
-          </label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="chk-white-bg" checked>
-            <span>⬜ 匯出為純白底 (取消則為透明底)</span>
-          </label>
-        </div>
-      </aside>
-
-      <!-- 中間：核心繪圖畫布區 -->
-      <section class="canvas-viewport" id="canvas-container">
-        <!-- 尚未貼上截圖時的提示畫面 -->
-        <div id="paste-hero" class="paste-hero">
-          <div class="hero-card">
-            <div class="hero-icon">📋</div>
-            <h2>按下 <kbd>Ctrl</kbd> + <kbd>V</kbd> 直接貼上題目截圖</h2>
-            <p>或將圖片拖曳至此處，或 <label for="file-input" class="upload-link">從電腦選取檔案</label></p>
-            <input type="file" id="file-input" accept="image/*" style="display:none;">
-            <div class="hero-tips">
-              <span class="tip-pill">⚡ 100% 純前端離線電腦視覺自動辨識</span>
-              <span class="tip-pill">🔒 零 API、零外傳、隱私 100% 安全</span>
-              <span class="tip-pill">📄 一鍵匯出 Word 試卷檔 (.docx)</span>
+            <!-- 已貼上截圖後的圖片預覽 -->
+            <div id="dropzone-preview" class="dropzone-preview" style="display:none;">
+              <img id="source-img" class="source-img" alt="題目截圖預覽">
+              <div class="preview-overlay-bar">
+                <span id="img-info" class="img-info">截圖已就緒</span>
+                <button id="btn-remove-img" class="btn-sm btn-danger" title="更換截圖">更換圖片</button>
+              </div>
             </div>
           </div>
+
+          <!-- 快速測試範例題目 -->
+          <div class="demo-samples">
+            <span class="demo-label">快速測試範例：</span>
+            <button id="btn-demo-incircle" class="btn-demo-pill">⭕ 課本高頻：三角形內切圓 (點擊體驗)</button>
+          </div>
         </div>
 
-        <!-- 核心幾何繪圖 SVG / Canvas 畫布 -->
-        <div class="canvas-stage" id="canvas-stage">
-          <!-- 底圖預覽層 -->
-          <img id="bg-image-layer" class="bg-image-layer" alt="底圖層" style="display: none;">
-          <!-- 課本風幾何向量層 -->
-          <svg id="geo-svg" class="geo-svg" viewBox="0 0 800 600" width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <!-- 坐標軸箭頭標記 -->
-              <marker id="axis-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#000000" />
-              </marker>
-              <!-- 平行箭頭標記 -->
-              <marker id="parallel-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-                <path d="M 0 2 L 6 5 L 0 8" fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" />
-              </marker>
-              <!-- 陰影線圖樣 -->
-              <pattern id="diagonal-hatch" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-                <line x1="0" y1="0" x2="0" y2="8" stroke="#666666" stroke-width="1.2" />
-              </pattern>
-            </defs>
+        <!-- AI 金鑰與辨識控制卡 -->
+        <div class="input-card">
+          <div class="card-header">
+            <span class="card-title">🤖 2. Gemini 幾何智能辨識</span>
+            <span id="key-status-badge" class="badge-status-neutral">請先設定 Key</span>
+          </div>
 
-            <!-- 1. 陰影區域層 -->
-            <g id="layer-shadings"></g>
-            <!-- 2. 圓形層 -->
-            <g id="layer-circles"></g>
-            <!-- 3. 線段與輔助線層 -->
-            <g id="layer-segments"></g>
-            <!-- 4. 幾何符號層 (直角折角、弧度、等長刻度) -->
-            <g id="layer-markers"></g>
-            <!-- 5. 邊長/角度數值文字層 -->
-            <g id="layer-labels"></g>
-            <!-- 6. 頂點與字母標籤層 -->
-            <g id="layer-vertices"></g>
-            <!-- 7. 手繪筆觸動態預覽層 -->
-            <g id="layer-sketch"></g>
-            <!-- 8. 即時繪圖動態指引輔助線層 -->
-            <g id="layer-guides"></g>
-          </svg>
+          <div class="api-key-box">
+            <div class="api-row">
+              <label for="input-api-key">Gemini API Key：</label>
+              <div class="api-input-wrap">
+                <input type="password" id="input-api-key" placeholder="貼上您的 Gemini API Key (AIza...)" autocomplete="off">
+                <button id="btn-toggle-key-vis" class="btn-icon" title="顯示/隱藏金鑰">👁️</button>
+              </div>
+            </div>
+            
+            <div class="api-links">
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="link-get-key">
+                👉 點此前往 Google AI Studio 免費領取 Key (每日 1,500 次完全免費，免信用卡)
+              </a>
+            </div>
+
+            <!-- 隱私安全保證卡 -->
+            <div class="privacy-guarantee">
+              <span class="shield-icon">🔒</span>
+              <p><b>100% 隱私與資安承諾</b>：本網站為純靜態無伺服器架構，您的 API Key 僅保存在您本機瀏覽器（LocalStorage）中，直接與 Google 官方端點通訊，絕無任何第三方伺服器中轉，金鑰與圖片 100% 安全不外洩。</p>
+            </div>
+          </div>
+
+          <!-- 巨型一鍵 AI 辨識按鈕 -->
+          <button id="btn-run-ai" class="btn-run-ai" disabled>
+            <span class="btn-icon-sparkle">✨</span>
+            <span id="ai-btn-text"><b>開始 AI 智能辨識幾何題目</b></span>
+          </button>
+
+          <!-- 辨識進度與結果分析說明 -->
+          <div id="ai-status-card" class="ai-status-card" style="display:none;">
+            <div class="status-indicator">
+              <div class="spinner"></div>
+              <span id="status-text">AI 正在深度分析幾何關係與幾何座標...</span>
+            </div>
+            <div id="ai-result-desc" class="ai-result-desc" style="display:none;"></div>
+          </div>
         </div>
 
-        <!-- 畫布底部狀態列 -->
-        <footer class="canvas-statusbar">
-          <div class="status-left">
-            <span id="status-hint">💡 提示：按 <b>Ctrl+V</b> 貼上截圖；在頂點上按住拖曳可調整位置；按 <b>Space</b> 可隨時快速對照。</span>
-          </div>
-          <div class="status-right">
-            <span id="canvas-coords">X: 0, Y: 0</span>
-            <button id="btn-undo" class="status-btn" title="復原 (Ctrl+Z)">↩️ 復原</button>
-            <button id="btn-clear-all" class="status-btn text-danger" title="清空所有繪圖">🗑️ 全部清空</button>
-          </div>
-        </footer>
       </section>
+
+      <!-- ================= 右欄：課本印刷級幾何預覽與 Word 導出 ================= -->
+      <section class="panel-right">
+        
+        <div class="preview-card">
+          <div class="preview-header">
+            <div class="preview-title-wrap">
+              <span class="preview-title">課本印刷級向量圖 (Word 可編輯版預覽)</span>
+              <span id="math-title-badge" class="badge-math">△ABC 內切圓</span>
+            </div>
+            
+            <div class="preview-options">
+              <label class="opt-label">
+                <input type="checkbox" id="chk-show-fill" checked>
+                <span>保留粉紅/幾何填色</span>
+              </label>
+              <label class="opt-label">
+                <input type="checkbox" id="chk-white-bg" checked>
+                <span>純白紙底色 (取消為透明底)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 核心高解析 SVG 向量畫布 (800x600 比例) -->
+          <div class="preview-stage-container" id="stage-container">
+            <svg id="preview-svg" class="preview-svg" viewBox="0 0 800 600" width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <marker id="axis-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#000000" />
+                </marker>
+              </defs>
+              <!-- 填色與陰影圖層 -->
+              <g id="layer-fills"></g>
+              <!-- 圓形圖層 -->
+              <g id="layer-circles"></g>
+              <!-- 線段圖層 -->
+              <g id="layer-segments"></g>
+              <!-- 符號標記圖層 (直角、弧度) -->
+              <g id="layer-markers"></g>
+              <!-- 頂點與字母標籤圖層 -->
+              <g id="layer-vertices"></g>
+              <g id="layer-labels"></g>
+            </svg>
+          </div>
+
+          <!-- 匯出與在 Word 中編輯之教學卡 -->
+          <div class="word-guide-card">
+            <div class="guide-header">
+              <span class="guide-icon">💡</span>
+              <b>如何在 Microsoft Word 中自由編輯本幾何圖形？</b>
+            </div>
+            <div class="guide-steps">
+              <div class="step-item">
+                <span class="step-num">1</span>
+                <span>點擊上方<b>「下載 Word 可編輯檔 (.docx)」</b>或將<b>「SVG 向量檔」</b>直接拖入 Word 試卷中。</span>
+              </div>
+              <div class="step-item">
+                <span class="step-num">2</span>
+                <span>在 Word 中的幾何圖上按滑鼠右鍵，點選 <b>「轉換成圖形 (Convert to Shape)」</b>。</span>
+              </div>
+              <div class="step-item">
+                <span class="step-num">3</span>
+                <span>圖形瞬間轉為 Word 原生形狀！三角形頂點、內切圓、文字標籤皆可隨意點選拉動與改字！</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
     </main>
-
-    <!-- 說明與快捷鍵彈窗 -->
-    <div id="help-modal" class="modal-overlay" style="display:none;">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3>📖 MathGeoCraft 快速上手指南</h3>
-          <button id="btn-close-help" class="btn-close">×</button>
-        </div>
-        <div class="modal-body">
-          <h4>🚀 3 步光速復刻課本圖</h4>
-          <ol>
-            <li><b>貼上截圖</b>：直接按 <kbd>Ctrl</kbd> + <kbd>V</kbd> 貼上題目截圖，自動轉為半透明底圖。</li>
-            <li><b>對照描摹或套用樣板</b>：
-              <ul>
-                <li>在左側點選「直角三角形」或「圓內接四邊形」樣板，拖動頂點對齊底圖。</li>
-                <li>或使用「實線多邊形」工具，對準底圖各頂點依序點擊，連回起點自動閉合。</li>
-              </ul>
-            </li>
-            <li><b>一鍵匯出</b>：點擊「複製圖片」可直接貼上到任何 Word 檔；或點擊「產生 Word 檔」直接下載排版好的試題！</li>
-          </ol>
-
-          <h4 class="mt-3">⌨️ 鍵盤快捷鍵一覽</h4>
-          <table class="key-table">
-            <tr><td><kbd>Ctrl</kbd> + <kbd>V</kbd></td><td>貼上截圖為底圖</td></tr>
-            <tr><td><kbd>Space</kbd> (空白鍵)</td><td>快速切換 底圖 顯示/隱藏對照</td></tr>
-            <tr><td><kbd>V</kbd></td><td>切換至「選取/移動」工具</td></tr>
-            <tr><td><kbd>P</kbd></td><td>切換至「實線多邊形」工具</td></tr>
-            <tr><td><kbd>D</kbd></td><td>切換至「輔助虛線」工具</td></tr>
-            <tr><td><kbd>R</kbd></td><td>切換至「直角記號」工具</td></tr>
-            <tr><td><kbd>A</kbd></td><td>切換至「角度圓弧」工具</td></tr>
-            <tr><td><kbd>C</kbd></td><td>切換至「圓形」工具</td></tr>
-            <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>刪除所選物件</td></tr>
-            <tr><td><kbd>Ctrl</kbd> + <kbd>Z</kbd></td><td>復原上一步 (Undo)</td></tr>
-          </table>
-        </div>
-        <div class="modal-footer">
-          <button id="btn-help-ok" class="btn btn-primary">我瞭解了，開始使用！</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script src="app.js"></script>
