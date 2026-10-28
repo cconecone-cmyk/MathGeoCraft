@@ -62,9 +62,7 @@
   const chkWhiteBg = document.getElementById('chk-white-bg');
 
   const btnExportDocx = document.getElementById('btn-export-docx');
-  const btnExportDocxFree = document.getElementById('btn-export-docx-free');
   const btnExportDocxLeft = document.getElementById('btn-export-docx-left');
-  const btnExportDocxFreeLeft = document.getElementById('btn-export-docx-free-left');
   const btnExportSvg = document.getElementById('btn-export-svg');
   const btnCopyPng = document.getElementById('btn-copy-png');
   const btnExportPng = document.getElementById('btn-export-png');
@@ -110,10 +108,8 @@
 
     setupClipboardAndDrop();
 
-    if (btnExportDocx) btnExportDocx.addEventListener('click', () => exportNativeEditableDocx(true));
-    if (btnExportDocxLeft) btnExportDocxLeft.addEventListener('click', () => exportNativeEditableDocx(true));
-    if (btnExportDocxFree) btnExportDocxFree.addEventListener('click', () => exportNativeEditableDocx(false));
-    if (btnExportDocxFreeLeft) btnExportDocxFreeLeft.addEventListener('click', () => exportNativeEditableDocx(false));
+    if (btnExportDocx) btnExportDocx.addEventListener('click', () => exportNativeEditableDocx());
+    if (btnExportDocxLeft) btnExportDocxLeft.addEventListener('click', () => exportNativeEditableDocx());
     btnExportSvg.addEventListener('click', exportToSvg);
     btnCopyPng.addEventListener('click', copyPngToClipboard);
     btnExportPng.addEventListener('click', downloadPng);
@@ -1255,10 +1251,18 @@
       return a;
     }
 
-    // (a) 圓心錨點
+    // (a) 圓心錨點與半徑端點鎖定 (避免半徑輔助線穿過圓心向外延伸破壞圖形)
     for (const c of circles) {
       const ca = addOrMergeAnchor(c.cx, c.cy, 'center', 8);
       c.centerId = ca.id;
+      for (const s of segments) {
+        if (Math.hypot(s.x1 - c.cx, s.y1 - c.cy) <= 8) {
+          s.x1 = c.cx; s.y1 = c.cy; s.locked1 = true;
+        }
+        if (Math.hypot(s.x2 - c.cx, s.y2 - c.cy) <= 8) {
+          s.x2 = c.cx; s.y2 = c.cy; s.locked2 = true;
+        }
+      }
     }
 
     // (b) 兩圓交點錨點 (如 P35 中圓 O' 與圓 O 的交點 A, B)
@@ -1273,7 +1277,7 @@
       }
     }
 
-    // (c) 直線兩兩交點 (若交點落在兩線段上或端點 14px 內)
+    // (c) 直線兩兩交點 (若交點落在兩線段上或端點 36px 內)
     for (let i = 0; i < segments.length; i++) {
       for (let j = i + 1; j < segments.length; j++) {
         const pt = intersectInfiniteLines(segments[i], segments[j]);
@@ -1282,7 +1286,7 @@
 
         const d1 = distPointToSegment(pt, segments[i]);
         const d2 = distPointToSegment(pt, segments[j]);
-        if (d1 <= 14 && d2 <= 14) {
+        if ((d1 <= 36 && d2 <= 36) || (Math.min(d1, d2) <= 12 && Math.max(d1, d2) <= 45)) {
           for (const c of circles) {
             if (Math.abs(pt.y - c.cy) <= 3.0) {
               pt.y = c.cy;
@@ -1291,8 +1295,8 @@
           }
           const intAnchor = addOrMergeAnchor(pt.x, pt.y, 'intersection', 10);
           // 若是線段端點靠近該交點，直接吸附端點
-          snapSegmentEndpointIfClose(segments[i], intAnchor, 12);
-          snapSegmentEndpointIfClose(segments[j], intAnchor, 12);
+          snapSegmentEndpointIfClose(segments[i], intAnchor, 36);
+          snapSegmentEndpointIfClose(segments[j], intAnchor, 36);
         }
       }
     }
@@ -1626,10 +1630,10 @@
   function snapSegmentEndpointIfClose(seg, pt, radius) {
     const d1 = Math.hypot(seg.x1 - pt.x, seg.y1 - pt.y);
     const d2 = Math.hypot(seg.x2 - pt.x, seg.y2 - pt.y);
-    if (d1 <= radius && d1 < d2) {
+    if (!seg.locked1 && d1 <= radius && (seg.locked2 || d1 < d2)) {
       seg.x1 = pt.x;
       seg.y1 = pt.y;
-    } else if (d2 <= radius && d2 < d1) {
+    } else if (!seg.locked2 && d2 <= radius && (seg.locked1 || d2 < d1)) {
       seg.x2 = pt.x;
       seg.y2 = pt.y;
     }
@@ -1637,7 +1641,9 @@
 
   function snapSegmentEndpointToAnchors(seg, anchors, radius) {
     for (const a of anchors) {
-      snapSegmentEndpointIfClose(seg, a, radius);
+      if (a.type === 'intersection' || a.type === 'center' || a.type === 'circle-intersection') {
+        snapSegmentEndpointIfClose(seg, a, radius);
+      }
     }
   }
 
@@ -2351,12 +2357,8 @@
         { name: 'word/document.xml', content: documentXml }
       ]);
 
-      const suffix = isGrouped ? '_群組版' : '_獨立形狀版';
-      downloadBlob(zipBlob, `${state.geometry.title || 'MathGeoCraft_幾何圖'}${suffix}.docx`);
-      const msg = isGrouped
-        ? '🎉 Word 原生繪圖版 (.docx) 已下載！點選圖形按右鍵「群組 → 取消群組」即可完全解開編輯！'
-        : '🎉 Word 獨立形狀版 (.docx) 已下載！所有線條、圓形與文字方塊已預先拆解，可直接單獨選取！';
-      showToast(msg, 4500);
+      downloadBlob(zipBlob, `${state.geometry.title || 'MathGeoCraft_可編輯幾何圖'}.docx`);
+      showToast('🎉 Word 可編輯向量檔 (.docx) 已下載！點選圖形按右鍵「群組 → 取消群組」即可完全解開編輯！', 4200);
     } catch (err) {
       console.error('Export DOCX error:', err);
       showToast('匯出 Word 失敗，請重試');
