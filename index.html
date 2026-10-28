@@ -61,29 +61,25 @@
     <main class="workspace">
       <!-- 左側：工具列與樣板 -->
       <aside class="sidebar-left">
-        <!-- 基礎繪圖工具 -->
+        <!-- 核心繪圖工具：智慧手繪筆自動校正 -->
         <div class="panel-section">
-          <div class="section-title">幾何圖元工具</div>
+          <div class="section-title">✨ 智慧手繪筆 (隨手畫自動校正)</div>
           <div class="tool-grid">
-            <button class="tool-btn active" data-tool="select" title="選取、拖曳移動頂點與調整線段長短 (V)">
-              <span class="tool-icon">👆</span>
-              <span class="tool-name">選取調整 (V)</span>
+            <button class="tool-btn active" data-tool="magic-pen" title="【魔法實線筆】在截圖上隨手畫線或多邊形，放開滑鼠自動校正成教科書標準實線！">
+              <span class="tool-icon">🪄</span>
+              <span class="tool-name">智慧實線筆</span>
             </button>
-            <button class="tool-btn" data-tool="segment" title="點擊兩點繪製實線線段 (S)">
-              <span class="tool-icon">／</span>
-              <span class="tool-name">實線線段 (S)</span>
-            </button>
-            <button class="tool-btn" data-tool="dashed-line" title="繪製課本輔助線 (虛線) (D)">
+            <button class="tool-btn" data-tool="magic-dashed" title="【魔法虛線筆】隨手畫輔助線，放開滑鼠自動校正成課本虛線！">
               <span class="tool-icon">╌</span>
-              <span class="tool-name">輔助虛線 (D)</span>
+              <span class="tool-name">智慧虛線筆</span>
             </button>
-            <button class="tool-btn" data-tool="circle" title="以圓心拖曳產生圓形 (C)">
+            <button class="tool-btn" data-tool="select" title="【選取微調】大感應熱區！拖曳頂點自由拉長縮短或移動幾何圖形 (V)">
+              <span class="tool-icon">👆</span>
+              <span class="tool-name">選取微調 (V)</span>
+            </button>
+            <button class="tool-btn" data-tool="circle" title="【圓形】以圓心拖曳產生圓形，圓周有把手可隨意縮放 (C)">
               <span class="tool-icon">⭕</span>
               <span class="tool-name">圓形 (C)</span>
-            </button>
-            <button class="tool-btn" data-tool="polygon" title="連續點擊打點並封閉多邊形 (P)">
-              <span class="tool-icon">△</span>
-              <span class="tool-name">多邊形 (P)</span>
             </button>
             <button class="tool-btn" data-tool="right-angle" title="點選頂點及兩邊加入課本標準直角折角 (R)">
               <span class="tool-icon">∟</span>
@@ -247,7 +243,9 @@
             <g id="layer-labels"></g>
             <!-- 6. 頂點與字母標籤層 -->
             <g id="layer-vertices"></g>
-            <!-- 7. 即時繪圖動態指引輔助線層 -->
+            <!-- 7. 手繪筆觸動態預覽層 -->
+            <g id="layer-sketch"></g>
+            <!-- 8. 即時繪圖動態指引輔助線層 -->
             <g id="layer-guides"></g>
           </svg>
         </div>

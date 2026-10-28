@@ -671,25 +671,51 @@ kbd {
   user-select: none;
 }
 
-/* 頂點圓點標記 */
+/* 頂點圓點標記與超大感應熱區 */
+.geo-vertex-hitarea {
+  fill: transparent;
+  cursor: grab;
+}
+
+.geo-vertex-hitarea:hover + .geo-vertex-dot {
+  r: 6.5px;
+  fill: #4f46e5;
+  stroke: #a5b4fc;
+  stroke-width: 2.5px;
+}
+
 .geo-vertex-dot {
   fill: #000000;
   stroke: #ffffff;
-  stroke-width: 1.5px;
+  stroke-width: 2px;
   cursor: grab;
-  transition: r 0.1s;
-}
-
-.geo-vertex-dot:hover {
-  r: 5px;
-  fill: var(--accent-color);
+  transition: r 0.15s, fill 0.15s, stroke 0.15s;
+  pointer-events: none; /* 由外層 hitarea 負責事件，抓取極度靈敏 */
 }
 
 .geo-vertex-dot.selected {
-  fill: var(--accent-color);
+  fill: #4f46e5;
   stroke: #818cf8;
-  stroke-width: 2.5px;
-  r: 5.5px;
+  stroke-width: 3px;
+  r: 7px;
+}
+
+/* 智慧筆動態手繪軌跡 (Magic Pen Live Stroke) */
+.pen-live-stroke {
+  fill: none;
+  stroke: #3b82f6;
+  stroke-width: 2.8px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+}
+
+.pen-live-dashed {
+  fill: none;
+  stroke: #60a5fa;
+  stroke-width: 2.4px;
+  stroke-linecap: round;
+  stroke-dasharray: 6, 4;
 }
 
 /* 吸附導引線 */
