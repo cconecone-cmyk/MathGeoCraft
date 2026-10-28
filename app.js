@@ -50,6 +50,7 @@
   const btnReDetect = document.getElementById('btn-re-detect');
   const btnDemoIncircle = document.getElementById('btn-demo-incircle');
   const btnDemoP35 = document.getElementById('btn-demo-p35');
+  const btnDemoObtuse = document.getElementById('btn-demo-obtuse');
 
   const detectStatusBadge = document.getElementById('detect-status-badge');
   const detectSummary = document.getElementById('detect-summary');
@@ -61,7 +62,9 @@
   const chkWhiteBg = document.getElementById('chk-white-bg');
 
   const btnExportDocx = document.getElementById('btn-export-docx');
+  const btnExportDocxFree = document.getElementById('btn-export-docx-free');
   const btnExportDocxLeft = document.getElementById('btn-export-docx-left');
+  const btnExportDocxFreeLeft = document.getElementById('btn-export-docx-free-left');
   const btnExportSvg = document.getElementById('btn-export-svg');
   const btnCopyPng = document.getElementById('btn-copy-png');
   const btnExportPng = document.getElementById('btn-export-png');
@@ -93,6 +96,9 @@
     if (btnDemoP35) {
       btnDemoP35.addEventListener('click', () => loadDemoImage('demo_p35.png'));
     }
+    if (btnDemoObtuse) {
+      btnDemoObtuse.addEventListener('click', () => loadDemoImage('demo_obtuse.png'));
+    }
 
     if (btnReDetect) {
       btnReDetect.addEventListener('click', () => {
@@ -104,8 +110,10 @@
 
     setupClipboardAndDrop();
 
-    btnExportDocx.addEventListener('click', exportNativeEditableDocx);
-    if (btnExportDocxLeft) btnExportDocxLeft.addEventListener('click', exportNativeEditableDocx);
+    if (btnExportDocx) btnExportDocx.addEventListener('click', () => exportNativeEditableDocx(true));
+    if (btnExportDocxLeft) btnExportDocxLeft.addEventListener('click', () => exportNativeEditableDocx(true));
+    if (btnExportDocxFree) btnExportDocxFree.addEventListener('click', () => exportNativeEditableDocx(false));
+    if (btnExportDocxFreeLeft) btnExportDocxFreeLeft.addEventListener('click', () => exportNativeEditableDocx(false));
     btnExportSvg.addEventListener('click', exportToSvg);
     btnCopyPng.addEventListener('click', copyPngToClipboard);
     btnExportPng.addEventListener('click', downloadPng);
@@ -203,10 +211,10 @@
   // ==========================================
   // 純前端斜體數學字元模板庫 (A-Z)
   // ==========================================
-  const CANDIDATE_CHARS = "ABCDEFGHJKLMNPQRSTUVXYZO";
+  const CANDIDATE_CHARS = "ABCDEFGHIJKLMNPQRSTUVXYZO";
   const CHAR_HOLES = {
     'A': 1, 'B': 2, 'C': 0, 'D': 1, 'E': 0, 'F': 0, 'G': 0, 'H': 0,
-    'J': 0, 'K': 0, 'L': 0, 'M': 0, 'N': 0, 'O': 1, 'P': 1, 'Q': 1,
+    'I': 0, 'J': 0, 'K': 0, 'L': 0, 'M': 0, 'N': 0, 'O': 1, 'P': 1, 'Q': 1,
     'R': 1, 'S': 0, 'T': 0, 'U': 0, 'V': 0, 'X': 0, 'Y': 0, 'Z': 0
   };
 
@@ -518,7 +526,7 @@
         for (let x = 0; x < W; x++) {
           if (linesOnlyMask[y * W + x] === 1) {
             const d = Math.hypot(x - c.cx, y - c.cy);
-            if (Math.abs(d - c.r) <= 2.3) {
+            if (Math.abs(d - c.r) <= 3.8) {
               linesOnlyMask[y * W + x] = 0;
             }
           }
@@ -526,8 +534,11 @@
       }
     }
 
-    const solidSegs = extractStraightSegmentsHoughPCA(linesOnlyMask, W, H, 14, 20, 28)
+    const rawSolidSegs = extractStraightSegmentsHoughPCA(linesOnlyMask, W, H, 14, 20, 28)
       .map(s => ({ ...s, style: 'solid', color: '#18181b' }));
+
+    // 剔除圓弧碎片被誤認為直線段的雜訊 (圓形變成線的防呆修復)
+    const solidSegs = rawSolidSegs.filter(seg => !isResidualCircleArc(seg, detectedCircles));
 
     // 檢查幾何範圍內的彩色虛線/輔助線 (例如 P35 中的粉紅虛線半徑 OA)
     const coloredGeoMask = new Uint8Array(W * H);
@@ -738,7 +749,7 @@
               if (found) alignedSectors++;
             }
             const cov = alignedSectors / 72;
-            if (cov >= 0.58) {
+            if (cov >= 0.72) {
               verified.push({ cov, cx: px, cy: py, r: rad });
             }
           }
@@ -1104,6 +1115,21 @@
     return segments;
   }
 
+  function isResidualCircleArc(seg, circles) {
+    if (!circles || circles.length === 0) return false;
+    for (const c of circles) {
+      const d1 = Math.abs(Math.hypot(seg.x1 - c.cx, seg.y1 - c.cy) - c.r);
+      const d2 = Math.abs(Math.hypot(seg.x2 - c.cx, seg.y2 - c.cy) - c.r);
+      const mx = (seg.x1 + seg.x2) / 2, my = (seg.y1 + seg.y2) / 2;
+      const dm = Math.abs(Math.hypot(mx - c.cx, my - c.cy) - c.r);
+      const segLen = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1);
+      if (d1 <= 3.8 && d2 <= 3.8 && dm <= 3.8 && segLen < c.r * 1.5) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function mergeCollinearSegments(segs) {
     const list = segs.map(s => ({ ...s }));
     let changed = true;
@@ -1315,20 +1341,52 @@
       }
     }
 
+    // (f-0) 互吸端點：若兩線段端點距離 <= 18px，對齊至中點，確保多邊形角落 100% 封閉接合 (未接合修復)
+    for (let i = 0; i < segments.length; i++) {
+      for (let j = i + 1; j < segments.length; j++) {
+        const s1 = segments[i], s2 = segments[j];
+        const pts1 = [{ x: s1.x1, y: s1.y1, set: (x, y) => { s1.x1 = x; s1.y1 = y; } },
+                      { x: s1.x2, y: s1.y2, set: (x, y) => { s1.x2 = x; s1.y2 = y; } }];
+        const pts2 = [{ x: s2.x1, y: s2.y1, set: (x, y) => { s2.x1 = x; s2.y1 = y; } },
+                      { x: s2.x2, y: s2.y2, set: (x, y) => { s2.x2 = x; s2.y2 = y; } }];
+        for (const p1 of pts1) {
+          for (const p2 of pts2) {
+            const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            if (d > 0.001 && d <= 18) {
+              const mx = (p1.x + p2.x) / 2;
+              const my = (p1.y + p2.y) / 2;
+              p1.set(mx, my);
+              p2.set(mx, my);
+            }
+          }
+        }
+      }
+    }
+
     // (f) 將各線段端點吸附至已建立之歐幾里得錨點，或建立端點錨點
-    const finalSegments = [];
+    const rawSegments = [];
     for (const seg of segments) {
-      snapSegmentEndpointToAnchors(seg, anchors, 11);
-      const v1 = addOrMergeAnchor(seg.x1, seg.y1, 'endpoint', 8);
-      const v2 = addOrMergeAnchor(seg.x2, seg.y2, 'endpoint', 8);
+      snapSegmentEndpointToAnchors(seg, anchors, 16);
+      const v1 = addOrMergeAnchor(seg.x1, seg.y1, 'endpoint', 10);
+      const v2 = addOrMergeAnchor(seg.x2, seg.y2, 'endpoint', 10);
       if (v1.id !== v2.id) {
-        finalSegments.push({
+        rawSegments.push({
           v1: v1.id,
           v2: v2.id,
           style: seg.style || 'solid',
           color: seg.color || '#18181b'
         });
       }
+    }
+
+    // 去除重複線段，確保幾何形狀完整
+    const finalSegments = [];
+    for (const s of rawSegments) {
+      const isDup = finalSegments.some(u =>
+        u.style === s.style &&
+        ((u.v1 === s.v1 && u.v2 === s.v2) || (u.v1 === s.v2 && u.v2 === s.v1))
+      );
+      if (!isDup) finalSegments.push(s);
     }
 
     // 4. 判定哪些錨點帶有實心圓點 (Dots)
@@ -1436,8 +1494,8 @@
             const lu = Math.hypot(ux, uy), lw = Math.hypot(wx, wy);
             if (lu > 12 && lw > 12) {
               const cosT = (ux * wx + uy * wy) / (lu * lw);
-              // 若其中一條是虛線輔助線 (如半徑 OA) 或兩實線正交
-              if (Math.abs(cosT) <= 0.085 && (r1.style === 'dashed' || r2.style === 'dashed' || anchors.length <= 6)) {
+              // 若兩線段正交 (85~95度)
+              if (Math.abs(cosT) <= 0.09) {
                 const raColor = (r1.style === 'dashed' ? r1.color : (r2.style === 'dashed' ? r2.color : '#18181b'));
                 rightAngles.push({
                   vertex: a.id,
@@ -1933,76 +1991,130 @@
   }
 
   // ==========================================
-  // 產生 100% Word 原生可編輯向量圖 (.docx)
+  // 產生 100% Word 原生可編輯繪圖畫布 (.docx)
+  // 採用微軟現代 DrawingML Canvas (<wpc:wpc>)
+  // 支援在 Word 中右鍵「群組 → 取消群組」完全拆解
   // ==========================================
-  function exportNativeEditableDocx() {
+  function exportNativeEditableDocx(isGrouped = true) {
     try {
+      const EMU_PER_PT = 12700;
       const bounds = computeGeometryBounds();
-      const ptWidth = 260;
+      const ptWidth = 320;
       const ptHeight = Math.round((bounds.height / bounds.width) * ptWidth);
+      const scale = ptWidth / bounds.width;
 
-      const SCALE = 10;
-      const originX = bounds.minX * SCALE;
-      const originY = bounds.minY * SCALE;
-      const coordW = bounds.width * SCALE;
-      const coordH = bounds.height * SCALE;
+      const canvasW_emu = Math.round(ptWidth * EMU_PER_PT);
+      const canvasH_emu = Math.round(ptHeight * EMU_PER_PT);
 
-      function findVertex(id) {
-        return state.geometry.vertices.find(v => v.id === id);
+      function ptToEmuX(x) {
+        return Math.round((x - bounds.minX) * scale * EMU_PER_PT);
+      }
+      function ptToEmuY(y) {
+        return Math.round((y - bounds.minY) * scale * EMU_PER_PT);
       }
 
       function escXml(str) {
-        return String(str)
+        return String(str || '')
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;');
       }
 
-      let vmlShapes = '';
+      function cleanHex(color) {
+        if (!color || color === 'transparent') return '';
+        return color.replace('#', '').toUpperCase();
+      }
 
-      // 1. 先放有填色的圓在底層，再放透明圓外框，確保兩圓相交時交弧不被遮蓋
+      function findVertex(id) {
+        return state.geometry.vertices.find(v => v.id === id);
+      }
+
+      let shapeIdCounter = 10;
+      let shapesXml = '';
+
+      // 1. 圓形 (<wps:wsp> ellipse) - 有填色者放底層
       const sortedCircles = [...state.geometry.circles].sort((a, b) => {
         const aFill = a.fill && a.fill !== 'transparent' ? 0 : 1;
         const bFill = b.fill && b.fill !== 'transparent' ? 0 : 1;
         return aFill - bFill;
       });
 
-      sortedCircles.forEach((c, idx) => {
+      sortedCircles.forEach(c => {
         const center = findVertex(c.center);
         if (!center) return;
-        const left = Math.round((center.x - c.radius) * SCALE);
-        const top = Math.round((center.y - c.radius) * SCALE);
-        const diam = Math.round(c.radius * 2 * SCALE);
-        const hasFill = state.options.showFill && c.fill && c.fill !== 'transparent';
-        const fillAttr = hasFill ? `filled="t" fillcolor="${escXml(c.fill)}"` : `filled="f"`;
-        const dashXml = c.style === 'dashed' ? `<v:stroke dashstyle="dash"/>` : '';
+        shapeIdCounter++;
+        const leftEmu = ptToEmuX(center.x - c.radius);
+        const topEmu = ptToEmuY(center.y - c.radius);
+        const diamEmu = Math.round(c.radius * 2 * scale * EMU_PER_PT);
 
-        vmlShapes += `
-        <v:oval id="circle_${idx}" style="position:absolute;left:${left};top:${top};width:${diam};height:${diam}" ${fillAttr} strokecolor="#18181b" strokeweight="1.5pt">
-          ${dashXml}
-        </v:oval>`;
+        const hasFill = state.options.showFill !== false && c.fill && c.fill !== 'transparent';
+        const fillHex = cleanHex(c.fill);
+        const fillXml = hasFill ? `<a:solidFill><a:srgbClr val="${fillHex}"/></a:solidFill>` : `<a:noFill/>`;
+        const dashXml = c.style === 'dashed' ? `<a:prstDash val="dash"/>` : '';
+
+        shapesXml += `
+        <wps:wsp>
+          <wps:cNvPr id="${shapeIdCounter}" name="圓形_${shapeIdCounter}"/>
+          <wps:cNvSpPr/>
+          <wps:spPr>
+            <a:xfrm>
+              <a:off x="${leftEmu}" y="${topEmu}"/>
+              <a:ext cx="${diamEmu}" cy="${diamEmu}"/>
+            </a:xfrm>
+            <a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>
+            ${fillXml}
+            <a:ln w="19050">
+              <a:solidFill><a:srgbClr val="18181B"/></a:solidFill>
+              ${dashXml}
+            </a:ln>
+          </wps:spPr>
+          <wps:bodyPr/>
+        </wps:wsp>`;
       });
 
-      // 2. 線段 (<v:line>)
-      state.geometry.segments.forEach((seg, idx) => {
+      // 2. 線段 (<wps:wsp> line)
+      state.geometry.segments.forEach(seg => {
         const v1 = findVertex(seg.v1);
         const v2 = findVertex(seg.v2);
         if (!v1 || !v2) return;
-        const x1 = Math.round(v1.x * SCALE), y1 = Math.round(v1.y * SCALE);
-        const x2 = Math.round(v2.x * SCALE), y2 = Math.round(v2.y * SCALE);
-        const strokeColor = seg.color || '#18181b';
-        const dashXml = seg.style === 'dashed' ? `<v:stroke dashstyle="dash"/>` : '';
+        shapeIdCounter++;
 
-        vmlShapes += `
-        <v:line id="seg_${idx}" from="${x1},${y1}" to="${x2},${y2}" strokecolor="${escXml(strokeColor)}" strokeweight="1.5pt">
-          ${dashXml}
-        </v:line>`;
+        const x1 = ptToEmuX(v1.x), y1 = ptToEmuY(v1.y);
+        const x2 = ptToEmuX(v2.x), y2 = ptToEmuY(v2.y);
+
+        const minX_e = Math.min(x1, x2), minY_e = Math.min(y1, y2);
+        const w_e = Math.max(1, Math.abs(x2 - x1));
+        const h_e = Math.max(1, Math.abs(y2 - y1));
+
+        const dx = x2 - x1, dy = y2 - y1;
+        const flipAttr = ((dx > 0 && dy < 0) || (dx < 0 && dy > 0)) ? 'flipV="1"' : '';
+
+        const colorHex = cleanHex(seg.color) || '18181B';
+        const dashXml = seg.style === 'dashed' ? `<a:prstDash val="dash"/>` : '';
+
+        shapesXml += `
+        <wps:wsp>
+          <wps:cNvPr id="${shapeIdCounter}" name="線段_${shapeIdCounter}"/>
+          <wps:cNvCnPr/>
+          <wps:spPr>
+            <a:xfrm ${flipAttr}>
+              <a:off x="${minX_e}" y="${minY_e}"/>
+              <a:ext cx="${w_e}" cy="${h_e}"/>
+            </a:xfrm>
+            <a:prstGeom prst="line"><a:avLst/></a:prstGeom>
+            <a:ln w="19050">
+              <a:solidFill><a:srgbClr val="${colorHex}"/></a:solidFill>
+              ${dashXml}
+            </a:ln>
+          </wps:spPr>
+          <wps:bodyPr/>
+        </wps:wsp>`;
       });
 
-      // 3. 直角折線記號 (<v:polyline>)
+      // 3. 直角記號 (<wps:wsp> lines)
       if (state.geometry.rightAngles) {
-        state.geometry.rightAngles.forEach((ra, idx) => {
+        state.geometry.rightAngles.forEach(ra => {
           const v = findVertex(ra.vertex);
           const v1 = findVertex(ra.v1);
           const v2 = findVertex(ra.v2);
@@ -2014,52 +2126,102 @@
           const size = 14;
           const du = { x: (u.x / lenU) * size, y: (u.y / lenU) * size };
           const dw = { x: (w.x / lenW) * size, y: (w.y / lenW) * size };
-          const p1x = Math.round((v.x + du.x) * SCALE), p1y = Math.round((v.y + du.y) * SCALE);
-          const p2x = Math.round((v.x + du.x + dw.x) * SCALE), p2y = Math.round((v.y + du.y + dw.y) * SCALE);
-          const p3x = Math.round((v.x + dw.x) * SCALE), p3y = Math.round((v.y + dw.y) * SCALE);
-          const raColor = ra.color || '#18181b';
 
-          vmlShapes += `
-          <v:polyline id="ra_${idx}" points="${p1x},${p1y} ${p2x},${p2y} ${p3x},${p3y}" filled="f" strokecolor="${escXml(raColor)}" strokeweight="1.2pt"/>`;
+          const p1 = { x: v.x + du.x, y: v.y + du.y };
+          const p2 = { x: v.x + du.x + dw.x, y: v.y + du.y + dw.y };
+          const p3 = { x: v.x + dw.x, y: v.y + dw.y };
+          const raColor = cleanHex(ra.color) || '18181B';
+
+          [[p1, p2], [p2, p3]].forEach(([ptA, ptB]) => {
+            shapeIdCounter++;
+            const ax = ptToEmuX(ptA.x), ay = ptToEmuY(ptA.y);
+            const bx = ptToEmuX(ptB.x), by = ptToEmuY(ptB.y);
+            const mx = Math.min(ax, bx), my = Math.min(ay, by);
+            const we = Math.max(1, Math.abs(bx - ax)), he = Math.max(1, Math.abs(by - ay));
+            const flip = ((bx - ax) * (by - ay) < 0) ? 'flipV="1"' : '';
+
+            shapesXml += `
+            <wps:wsp>
+              <wps:cNvPr id="${shapeIdCounter}" name="直角邊_${shapeIdCounter}"/>
+              <wps:cNvCnPr/>
+              <wps:spPr>
+                <a:xfrm ${flip}>
+                  <a:off x="${mx}" y="${my}"/>
+                  <a:ext cx="${we}" cy="${he}"/>
+                </a:xfrm>
+                <a:prstGeom prst="line"><a:avLst/></a:prstGeom>
+                <a:ln w="15240"><a:solidFill><a:srgbClr val="${raColor}"/></a:solidFill></a:ln>
+              </wps:spPr>
+              <wps:bodyPr/>
+            </wps:wsp>`;
+          });
         });
       }
 
-      // 4. 實心點 (<v:oval>)
+      // 4. 點記號 (<wps:wsp> dot ellipse)
       if (state.geometry.dots) {
-        state.geometry.dots.forEach((d, idx) => {
+        state.geometry.dots.forEach(d => {
           const v = findVertex(d.vertex);
           if (!v) return;
-          const r = (d.r || 4) * SCALE;
-          const left = Math.round(v.x * SCALE - r);
-          const top = Math.round(v.y * SCALE - r);
-          const diam = Math.round(r * 2);
+          shapeIdCounter++;
+          const r = d.r || 4;
+          const leftEmu = ptToEmuX(v.x - r);
+          const topEmu = ptToEmuY(v.y - r);
+          const diamEmu = Math.round(r * 2 * scale * EMU_PER_PT);
 
-          vmlShapes += `
-          <v:oval id="dot_${idx}" style="position:absolute;left:${left};top:${top};width:${diam};height:${diam}" filled="t" fillcolor="#18181b" strokecolor="#18181b" strokeweight="0.5pt"/>`;
+          shapesXml += `
+          <wps:wsp>
+            <wps:cNvPr id="${shapeIdCounter}" name="點_${shapeIdCounter}"/>
+            <wps:cNvSpPr/>
+            <wps:spPr>
+              <a:xfrm>
+                <a:off x="${leftEmu}" y="${topEmu}"/>
+                <a:ext cx="${diamEmu}" cy="${diamEmu}"/>
+              </a:xfrm>
+              <a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>
+              <a:solidFill><a:srgbClr val="18181B"/></a:solidFill>
+              <a:ln w="6350"><a:solidFill><a:srgbClr val="18181B"/></a:solidFill></a:ln>
+            </wps:spPr>
+            <wps:bodyPr/>
+          </wps:wsp>`;
         });
       }
 
-      // 5. 可編輯斜體數學字母標籤 (<v:rect><v:textbox>...)
-      state.geometry.vertices.forEach((v, idx) => {
+      // 5. 獨立可編輯斜體文字方塊 (<wps:wsp> txBox)
+      state.geometry.vertices.forEach(v => {
         if (!v.label) return;
+        shapeIdCounter++;
         const offset = v.labelOffset || { dx: 0, dy: -20 };
-        const boxW = 42 * SCALE;
-        const boxH = 30 * SCALE;
-        const left = Math.round((v.x + offset.dx) * SCALE - boxW / 2);
-        const top = Math.round((v.y + offset.dy) * SCALE - boxH / 2);
+        const boxW_pt = 32;
+        const boxH_pt = 24;
+        const leftEmu = ptToEmuX(v.x + offset.dx) - Math.round((boxW_pt * EMU_PER_PT) / 2);
+        const topEmu = ptToEmuY(v.y + offset.dy) - Math.round((boxH_pt * EMU_PER_PT) / 2);
+        const wEmu = Math.round(boxW_pt * EMU_PER_PT);
+        const hEmu = Math.round(boxH_pt * EMU_PER_PT);
 
-        vmlShapes += `
-        <v:rect id="lbl_${idx}" style="position:absolute;left:${left};top:${top};width:${boxW};height:${boxH}" filled="f" stroked="f">
-          <v:textbox inset="0,0,0,0">
+        shapesXml += `
+        <wps:wsp>
+          <wps:cNvPr id="${shapeIdCounter}" name="標籤_${escXml(v.label)}"/>
+          <wps:cNvSpPr txBox="1"/>
+          <wps:spPr>
+            <a:xfrm>
+              <a:off x="${leftEmu}" y="${topEmu}"/>
+              <a:ext cx="${wEmu}" cy="${hEmu}"/>
+            </a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+            <a:ln><a:noFill/></a:ln>
+          </wps:spPr>
+          <wps:txbx>
             <w:txbxContent>
               <w:p>
                 <w:pPr>
-                  <w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>
                   <w:jc w:val="center"/>
+                  <w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>
                 </w:pPr>
                 <w:r>
                   <w:rPr>
-                    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+                    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>
                     <w:i/>
                     <w:sz w:val="26"/>
                     <w:szCs w:val="26"/>
@@ -2068,16 +2230,49 @@
                 </w:r>
               </w:p>
             </w:txbxContent>
-          </v:textbox>
-        </v:rect>`;
+          </wps:txbx>
+          <wps:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>
+        </wps:wsp>`;
       });
+
+      const graphicXml = isGrouped
+        ? `<a:graphic>
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">
+                <wpg:wgp>
+                  <wpg:cNvPr id="2" name="幾何圖形群組"/>
+                  <wpg:cNvGrpSpPr/>
+                  <wpg:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="${canvasW_emu}" cy="${canvasH_emu}"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="${canvasW_emu}" cy="${canvasH_emu}"/>
+                    </a:xfrm>
+                  </wpg:grpSpPr>
+                  ${shapesXml}
+                </wpg:wgp>
+              </a:graphicData>
+            </a:graphic>`
+        : `<a:graphic>
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas">
+                <wpc:wpc>
+                  <wpc:bg/>
+                  <wpc:whole/>
+                  ${shapesXml}
+                </wpc:wpc>
+              </a:graphicData>
+            </a:graphic>`;
+
+      const docPrName = isGrouped ? "幾何繪圖群組" : "幾何繪圖畫布";
 
       const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document
   xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-  xmlns:v="urn:schemas-microsoft-com:vml"
-  xmlns:o="urn:schemas-microsoft-com:office:office"
-  xmlns:w10="urn:schemas-microsoft-com:office:word"
+  xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+  xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <w:body>
     <w:p>
@@ -2087,11 +2282,11 @@
       </w:pPr>
       <w:r>
         <w:rPr>
-          <w:rFonts w:ascii="Times New Roman" w:eastAsia="微軟正黑體" w:hAnsi="Times New Roman"/>
+          <w:rFonts w:ascii="Times New Roman" w:eastAsia="微軟正黑體"/>
           <w:b/>
           <w:sz w:val="28"/>
         </w:rPr>
-        <w:t>【幾何圖形（Word 原生可編輯向量版）】${escXml(state.geometry.title)}</w:t>
+        <w:t>【Word 原生可編輯繪圖檔】${escXml(state.geometry.title)}</w:t>
       </w:r>
     </w:p>
     <w:p>
@@ -2100,24 +2295,30 @@
         <w:spacing w:before="120" w:after="240"/>
       </w:pPr>
       <w:r>
-        <w:pict>
-          <v:group id="mathgeocraft_group" style="width:${ptWidth}pt;height:${ptHeight}pt;mso-position-horizontal:center" coordorigin="${originX},${originY}" coordsize="${coordW},${coordH}">
-            ${vmlShapes}
-          </v:group>
-        </w:pict>
+        <w:drawing>
+          <wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">
+            <wp:simplePos x="0" y="0"/>
+            <wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>
+            <wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>
+            <wp:extent cx="${canvasW_emu}" cy="${canvasH_emu}"/>
+            <wp:effectExtent l="0" t="0" r="0" b="0"/>
+            <wp:wrapSquare wrapText="bothSides"/>
+            <wp:docPr id="1" name="${docPrName}"/>
+            <wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>
+            ${graphicXml}
+          </wp:anchor>
+        </w:drawing>
       </w:r>
     </w:p>
     <w:p>
-      <w:pPr>
-        <w:jc w:val="center"/>
-      </w:pPr>
+      <w:pPr><w:jc w:val="center"/></w:pPr>
       <w:r>
         <w:rPr>
-          <w:rFonts w:ascii="Times New Roman" w:eastAsia="微軟正黑體" w:hAnsi="Times New Roman"/>
+          <w:rFonts w:ascii="Times New Roman" w:eastAsia="微軟正黑體"/>
           <w:color w:val="64748B"/>
           <w:sz w:val="19"/>
         </w:rPr>
-        <w:t>💡 提示：直接點擊上方圖中的字母 (A, B, P, O...) 即可改字；在圖上按右鍵「群組 → 取消群組」即可單獨拖動線條、調整圓形大小或更改填色。</w:t>
+        <w:t>💡 Word 操作提示：在圖上按右鍵選擇「群組 → 取消群組」即可自由拖動線段或圓形；雙擊字母文字方塊即可直接修改文字。</w:t>
       </w:r>
     </w:p>
     <w:sectPr>
@@ -2150,8 +2351,12 @@
         { name: 'word/document.xml', content: documentXml }
       ]);
 
-      downloadBlob(zipBlob, `${state.geometry.title || 'MathGeoCraft_可編輯幾何圖'}.docx`);
-      showToast('🎉 Word 原生可編輯版 (.docx) 已下載！在 Word 內可直接點擊改字與拉動圖形！', 4200);
+      const suffix = isGrouped ? '_群組版' : '_獨立形狀版';
+      downloadBlob(zipBlob, `${state.geometry.title || 'MathGeoCraft_幾何圖'}${suffix}.docx`);
+      const msg = isGrouped
+        ? '🎉 Word 原生繪圖版 (.docx) 已下載！點選圖形按右鍵「群組 → 取消群組」即可完全解開編輯！'
+        : '🎉 Word 獨立形狀版 (.docx) 已下載！所有線條、圓形與文字方塊已預先拆解，可直接單獨選取！';
+      showToast(msg, 4500);
     } catch (err) {
       console.error('Export DOCX error:', err);
       showToast('匯出 Word 失敗，請重試');

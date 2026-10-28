@@ -25,11 +25,14 @@
       
       <!-- 快速動作按鈕區 -->
       <div class="action-bar">
-        <button id="btn-export-docx" class="btn btn-accent" title="匯出內含 Word 原生可編輯線條、圓形與文字方塊的 .docx 檔案">
-          <span class="icon">📄</span> <b>下載 Word 可編輯版 (.docx)</b>
+        <button id="btn-export-docx" class="btn btn-accent" title="匯出微軟原生繪圖群組，Word 內按右鍵「群組 → 取消群組」即可自由編輯">
+          <span class="icon">📄</span> <b>下載 Word 原生繪圖版 (可取消群組)</b>
         </button>
-        <button id="btn-export-svg" class="btn btn-primary" title="匯出純向量 SVG 檔">
-          <span class="icon">📐</span> 下載 SVG 向量檔
+        <button id="btn-export-docx-free" class="btn btn-secondary" title="匯出直接全拆開之原生圖形，無需手動取消群組">
+          <span class="icon">🔓</span> 下載 Word 獨立形狀版
+        </button>
+        <button id="btn-export-svg" class="btn btn-secondary" title="匯出純向量 SVG 檔">
+          <span class="icon">📐</span> 下載 SVG
         </button>
         <button id="btn-copy-png" class="btn btn-secondary" title="直接複製 300+ DPI 課本印刷級高解析圖到剪貼簿，切到 Word 即可貼上">
           <span class="icon">📋</span> 複製圖片
@@ -46,6 +49,18 @@
       <!-- ================= 左欄：題目截圖輸入與純前端辨識結果 ================= -->
       <section class="panel-left">
         
+        <!-- 辨識指引與開源宗旨卡 (依使用者指導潤飾) -->
+        <div class="notice-card">
+          <div class="notice-header">
+            <span class="notice-icon">📢</span>
+            <span class="notice-title">使用技巧與開源宗旨</span>
+          </div>
+          <div class="notice-body">
+            <p>🎯 <b>幾何辨識最佳建議</b>：建議截圖保持<b>清晰</b>或使用<b>原始圖片</b>，底圖為<b>清晰黑色線條</b>時辨識度最佳；其他顏色線條或複雜圖形辨識度較差，此類特殊題型需使用個人 AI 輔助辨識。</p>
+            <p>🌟 <b>開源目標</b>：本網站開源目標是<b>方便、好用、易上手</b>！100% 純前端免 API 運算，匯出之 Word 檔案支援微軟原生繪圖畫布，在 Word 中可直接<b>右鍵解開群組</b>或使用<b>免解群組版</b>自由編輯！</p>
+          </div>
+        </div>
+
         <!-- 截圖輸入區 (支援貼上、拖放、點選，貼上即自動辨識) -->
         <div class="input-card">
           <div class="card-header">
@@ -80,6 +95,7 @@
             <span class="demo-label">實測範例：</span>
             <button id="btn-demo-incircle" class="btn-demo-pill">⭕ 範例 1：△ABC 內切圓</button>
             <button id="btn-demo-p35" class="btn-demo-pill">📐 範例 2：習作 P35 兩圓切線</button>
+            <button id="btn-demo-obtuse" class="btn-demo-pill">🔺 範例 3：鈍角 △ 內心 I</button>
           </div>
         </div>
 
@@ -100,14 +116,20 @@
             <div id="labels-chip-list" class="labels-chip-list"></div>
           </div>
 
-          <button id="btn-export-docx-left" class="btn-run-ai">
-            <span class="btn-icon-sparkle">📄</span>
-            <span><b>一鍵輸出 Word 可編輯版 (.docx)</b></span>
-          </button>
+          <div class="btn-docx-row">
+            <button id="btn-export-docx-left" class="btn-run-ai">
+              <span class="btn-icon-sparkle">📄</span>
+              <span><b>下載 Word 原生繪圖版 (可取消群組)</b></span>
+            </button>
+            <button id="btn-export-docx-free-left" class="btn-run-ai btn-free-shapes">
+              <span class="btn-icon-sparkle">🔓</span>
+              <span><b>下載 Word 獨立形狀版 (免解群組)</b></span>
+            </button>
+          </div>
 
           <div class="privacy-guarantee" style="margin-top: 12px;">
             <span class="shield-icon">⚡</span>
-            <p><b>100% 純前端幾何視覺引擎</b>：完全不需要 API Key、不連外網、零花費。匯出的 Word 檔內建微軟 Office 原生向量圖形（VML 線段、橢圓與獨立文字方塊），在 Word 中可直接點擊改字、拉動線條與換色！</p>
+            <p><b>100% 純前端幾何視覺引擎</b>：完全不需要 API Key、不連外網、零花費。匯出的 Word 檔採用微軟 Office 原生向量繪圖規範（DrawingML 線段、圓形與獨立斜體文字方塊），在 Word 中可點選圖形按右鍵「群組 → 取消群組」完全拆解自由編輯！</p>
           </div>
         </div>
 
@@ -161,20 +183,20 @@
           <div class="word-guide-card">
             <div class="guide-header">
               <span class="guide-icon">💡</span>
-              <b>匯出之 Word 檔 (.docx) 為 100% 微軟 Office 原生可編輯圖形：</b>
+              <b>匯出之 Word 檔 (.docx) 為 100% 微軟 Office 原生 DrawingML 向量繪圖：</b>
             </div>
             <div class="guide-steps">
               <div class="step-item">
                 <span class="step-num">1</span>
-                <span>點擊<b>「下載 Word 可編輯版 (.docx)」</b>並以 Microsoft Word 開啟檔案。</span>
+                <span>點擊<b>「下載 Word 原生繪圖版」</b>並以 Microsoft Word 開啟檔案。</span>
               </div>
               <div class="step-item">
                 <span class="step-num">2</span>
-                <span>圖形由<b>原生線條、圓形與獨立斜體文字方塊 ($A, B, C\dots$)</b> 組成，直接點字母即可改字！</span>
+                <span>點選圖形，按滑鼠右鍵選擇<b>「群組 → 取消群組」</b>，實測 100% 成功解開群組！</span>
               </div>
               <div class="step-item">
                 <span class="step-num">3</span>
-                <span>在圖上按右鍵選擇<b>「群組 → 取消群組」</b>，即可單獨移動任一條線、放大縮小圓形或改變填色！</span>
+                <span>解開後所有<b>線段、圓形、直角記號皆為獨立向量形狀</b>，可自由拖曳、改色、調粗細；字母文字方塊直接按兩下即可改字！亦可選擇<b>「下載 Word 獨立形狀版」</b>開啟即為全拆開狀態。</span>
               </div>
             </div>
           </div>
