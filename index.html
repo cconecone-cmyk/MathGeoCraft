@@ -27,6 +27,15 @@
       
       <!-- 快速動作按鈕區 -->
       <div class="action-bar">
+        <!-- 顯眼的操作工具：復原與刪除 -->
+        <button id="btn-undo-top" class="btn btn-action-undo" title="快捷鍵：[Ctrl + Z] 復原上一步">
+          <span class="icon">↩️</span> <b>復原 (Undo)</b>
+        </button>
+        <button id="btn-delete-top" class="btn btn-action-delete" title="快捷鍵：[Delete] 刪除選取的物件" disabled>
+          <span class="icon">🗑️</span> <b>刪除選取</b>
+        </button>
+        <div class="action-divider"></div>
+
         <button id="btn-toggle-bg" class="btn btn-secondary" title="快捷鍵：空白鍵 [Space] 切換顯示/隱藏底圖">
           <span class="icon">👁️</span> <span id="bg-toggle-text">隱藏底圖</span>
         </button>
@@ -91,18 +100,38 @@
           </div>
         </div>
 
-        <!-- 常用課本幾何樣板 (極速點擊套用) -->
+        <!-- 國中課本與會考最高頻幾何樣板 (一鍵貼入對齊) -->
         <div class="panel-section">
-          <div class="section-title">課本經典樣板 (一鍵貼入對齊)</div>
-          <div class="template-grid">
-            <button class="preset-btn" data-preset="right-triangle" title="標準直角三角形 (附直角符號)">直角三角形</button>
-            <button class="preset-btn" data-preset="isosceles-triangle" title="等腰三角形 (附等長標記與高)">等腰三角形</button>
+          <div class="section-title">國中課本最高頻圖形 (點擊即用)</div>
+          
+          <div class="preset-category-label">🔥 相似形與比例 (九年級)</div>
+          <div class="template-grid mb-2">
+            <button class="preset-btn" data-preset="similar-a" title="【出題率 No.1】A 字形平行截線 (DE // BC)">A 字相似形</button>
+            <button class="preset-btn" data-preset="similar-hourglass" title="【出題率 No.2】8 字形 / 沙漏形交叉相似">8 字沙漏相似</button>
+            <button class="preset-btn" data-preset="right-altitude" title="母子相似定理 (直角三角形斜邊上的高)">母子相似定理</button>
+          </div>
+
+          <div class="preset-category-label">⭕ 圓形單元高頻 (九年級)</div>
+          <div class="template-grid mb-2">
+            <button class="preset-btn" data-preset="chord-distance" title="【段考必考】垂徑定理與弦心距 (直角 △OMA)">弦心距直角△</button>
+            <button class="preset-btn" data-preset="tangent-kite" title="圓外一點作兩切線 (鳶形 PAOB)">圓外雙切線</button>
+            <button class="preset-btn" data-preset="inscribed-angle" title="圓心角與圓周角關係 (同弧兩倍角)">圓心角與圓周角</button>
+            <button class="preset-btn" data-preset="cyclic-quad" title="圓內接四邊形 (對角互補)">圓內接四邊形</button>
+          </div>
+
+          <div class="preset-category-label">📐 畢氏定理與全等 (八年級)</div>
+          <div class="template-grid mb-2">
+            <button class="preset-btn" data-preset="right-triangle" title="標準畢氏定理直角三角形 (附 90° 標記)">畢氏直角△</button>
+            <button class="preset-btn" data-preset="isosceles-triangle" title="等腰三角形 (高線垂直平分底邊)">等腰△與高</button>
+            <button class="preset-btn" data-preset="angle-bisector-dist" title="角平分線性質 (到兩邊等距離垂線)">角平分線性質</button>
             <button class="preset-btn" data-preset="equilateral-triangle" title="正三角形 (三邊等長標記)">正三角形</button>
-            <button class="preset-btn" data-preset="parallelogram" title="平行四邊形 (附虛線高線)">平行四邊形</button>
-            <button class="preset-btn" data-preset="trapezoid" title="梯形 (上底與下底下附虛線垂直高)">等腰梯形</button>
-            <button class="preset-btn" data-preset="circle-triangle" title="圓與內接三角形 (附圓心 O)">圓內接三角形</button>
-            <button class="preset-btn" data-preset="cyclic-quad" title="圓內接四邊形">圓內接四邊形</button>
-            <button class="preset-btn" data-preset="coordinate-axis" title="直角坐標系 (附箭頭與原點 O)">直角坐標平面</button>
+          </div>
+
+          <div class="preset-category-label">▱ 特殊四邊形與坐標</div>
+          <div class="template-grid">
+            <button class="preset-btn" data-preset="parallelogram" title="平行四邊形 (含高線與對角線)">平行四邊形</button>
+            <button class="preset-btn" data-preset="trapezoid" title="等腰梯形 (含兩條垂直高線)">等腰梯形</button>
+            <button class="preset-btn" data-preset="coordinate-axis" title="直角坐標平面 (含原點 O 與箭頭)">直角坐標系</button>
           </div>
         </div>
 
@@ -282,8 +311,32 @@
               </div>
             </div>
 
+            <!-- 圓形微調 (可拖曳縮放與精確數值調整) -->
+            <div id="circle-prop-group" class="prop-group" style="display:none;">
+              <div class="prop-header">⭕ 圓形半徑與縮放設定</div>
+              <div class="control-row">
+                <label for="prop-circle-radius-slider">半徑大小：<b id="circle-radius-val" style="color: #38bdf8;">120</b> px</label>
+                <input type="range" id="prop-circle-radius-slider" min="15" max="350" value="120" style="width: 100%; cursor: pointer;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">精確數值：</span>
+                  <input type="number" id="prop-circle-radius-num" min="15" max="350" value="120" class="input-text" style="width: 80px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">px</span>
+                </div>
+              </div>
+              <div class="control-row">
+                <label for="prop-circle-style">圓周線條：</label>
+                <select id="prop-circle-style" class="input-select">
+                  <option value="solid">實線（課本輪廓）</option>
+                  <option value="dashed">虛線（輔助圓）</option>
+                </select>
+              </div>
+              <p class="text-muted text-xs" style="margin-top: 6px; line-height: 1.4;">💡 提示：點擊圓形後，可直接在畫布上拖曳圓周上的<b>縮放控制手柄</b>放大或縮小！</p>
+            </div>
+
             <div class="control-actions mt-3">
-              <button id="btn-delete-selected" class="btn btn-sm btn-danger w-full">刪除選取物件 (Delete)</button>
+              <button id="btn-delete-selected" class="btn btn-danger-prominent w-full">
+                <span class="icon">🗑️</span> <b>刪除此物件 (Delete)</b>
+              </button>
             </div>
           </div>
         </div>

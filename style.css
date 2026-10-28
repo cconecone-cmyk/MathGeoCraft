@@ -138,6 +138,80 @@ body {
   background: linear-gradient(135deg, #047857, #059669);
 }
 
+/* 頂部顯眼的核心操作按鈕：復原 (Undo) 與 刪除 (Delete) */
+.btn-action-undo {
+  background-color: #3b4252;
+  color: #fbbf24;
+  border: 1px solid #d97706;
+  font-weight: 600;
+  box-shadow: 0 2px 5px rgba(217, 119, 6, 0.2);
+}
+
+.btn-action-undo:hover {
+  background-color: #d97706;
+  color: #ffffff;
+}
+
+.btn-action-delete {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid #ef4444;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-action-delete:not(:disabled) {
+  background-color: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+  animation: pulse-danger 1.5s infinite;
+  cursor: pointer;
+}
+
+.btn-action-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #475569;
+  color: #94a3b8;
+  background-color: transparent;
+}
+
+@keyframes pulse-danger {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+.action-divider {
+  width: 1px;
+  height: 24px;
+  background-color: var(--border-color);
+  margin: 0 4px;
+}
+
+.btn-danger-prominent {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  color: #ffffff;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s;
+}
+
+.btn-danger-prominent:hover {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.5);
+}
+
 .btn-danger {
   background-color: rgba(239, 68, 68, 0.2);
   color: #fca5a5;
@@ -161,6 +235,19 @@ body {
 .btn-sm {
   padding: 4px 8px;
   font-size: 12px;
+}
+
+.preset-category-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  padding-left: 2px;
+}
+
+.mb-2 {
+  margin-bottom: 8px;
 }
 
 /* 主工作區三欄佈局 */
@@ -498,7 +585,52 @@ kbd {
 .geo-circle {
   stroke: var(--geo-stroke);
   stroke-width: 1.6px;
-  fill: none;
+  fill: transparent;
+  cursor: pointer;
+  transition: stroke 0.15s, stroke-width 0.15s;
+}
+
+.geo-circle:hover {
+  stroke: #4f46e5;
+  stroke-width: 2.2px;
+}
+
+.geo-circle.selected {
+  stroke: #6366f1;
+  stroke-width: 2.4px;
+}
+
+/* 圓形縮放專用把手點 (Circumference Resize Handle) */
+.circle-resize-handle {
+  fill: #ffffff;
+  stroke: #4f46e5;
+  stroke-width: 2.5px;
+  cursor: ew-resize;
+  transition: transform 0.15s, r 0.15s;
+  filter: drop-shadow(0 2px 4px rgba(79, 70, 229, 0.4));
+}
+
+.circle-resize-handle:hover {
+  r: 7.5px;
+  fill: #818cf8;
+  stroke: #ffffff;
+}
+
+.circle-resize-guide {
+  stroke: #6366f1;
+  stroke-width: 1.2px;
+  stroke-dasharray: 4, 3;
+}
+
+.circle-handle-tip {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  fill: #4338ca;
+  font-weight: 600;
+  paint-order: stroke fill;
+  stroke: #ffffff;
+  stroke-width: 3px;
+  pointer-events: none;
 }
 
 .geo-right-angle {
