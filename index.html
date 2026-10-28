@@ -3,15 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MathGeoCraft 幾何神器 - 題目截圖秒轉 Word 可編輯向量圖</title>
-  <meta name="description" content="專為數學老師打造：貼上幾何題目截圖，AI 深度識別幾何關係，一鍵輸出 Word 原生可編輯向量圖 (.docx / .svg) 與課本印刷級高解析圖。">
-  <!-- 字型：載入 KaTeX / Times New Roman 風格數學字型 -->
+  <title>MathGeoCraft 幾何神器 - 純前端題目截圖秒轉 Word 可編輯向量圖</title>
+  <meta name="description" content="100% 純前端免 API 幾何辨識工具：貼上幾何題目截圖 (Ctrl+V)，自動辨識三角形、圓形、切點與字母標籤，一鍵輸出 Word 原生可編輯向量形狀 (.docx)。">
+  <!-- 字型：載入 STIX Two Text / Times New Roman 風格數學字型 -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=STIX+Two+Text:ital,wght@0,400;0,600;1,400;1,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <!-- 本地免連網 docx 產生庫 -->
-  <script src="vendor/docx.umd.js"></script>
 </head>
 <body>
   <div id="app" class="app-container">
@@ -20,50 +18,47 @@
       <div class="brand-section">
         <div class="logo-icon">📐</div>
         <div class="brand-text">
-          <h1>MathGeoCraft <span class="badge">AI 幾何轉 Word 神器</span></h1>
-          <p class="sub-title">題目截圖 (Ctrl+V) → AI 深度讀懂幾何關係 → 輸出 Word 原生可編輯形狀 (.docx / SVG)</p>
+          <h1>MathGeoCraft <span class="badge">100% 純前端・免 API</span></h1>
+          <p class="sub-title">貼上題目截圖 (Ctrl+V) → 瀏覽器毫秒級自動幾何辨識 → 輸出 Word 原生可編輯向量圖 (.docx)</p>
         </div>
       </div>
       
       <!-- 快速動作按鈕區 -->
       <div class="action-bar">
-        <button id="btn-export-docx" class="btn btn-accent" title="一鍵打包產生包含原生可編輯向量圖與試卷排版的 Word 檔">
-          <span class="icon">📄</span> <b>下載 Word 可編輯檔 (.docx)</b>
+        <button id="btn-export-docx" class="btn btn-accent" title="匯出內含 Word 原生可編輯線條、圓形與文字方塊的 .docx 檔案">
+          <span class="icon">📄</span> <b>下載 Word 可編輯版 (.docx)</b>
         </button>
-        <button id="btn-export-svg" class="btn btn-primary" title="匯出純向量 SVG，拖進 Word 點右鍵「轉換成圖形」即可原生編輯">
+        <button id="btn-export-svg" class="btn btn-primary" title="匯出純向量 SVG 檔">
           <span class="icon">📐</span> 下載 SVG 向量檔
         </button>
         <button id="btn-copy-png" class="btn btn-secondary" title="直接複製 300+ DPI 課本印刷級高解析圖到剪貼簿，切到 Word 即可貼上">
           <span class="icon">📋</span> 複製圖片
         </button>
-        <button id="btn-export-png" class="btn btn-secondary" title="匯出 300+ DPI 高解析圖檔">
+        <button id="btn-export-png" class="btn btn-secondary" title="匯出 300+ DPI 高解析 PNG 圖檔">
           <span class="icon">🖼️</span> 下載 PNG
-        </button>
-        <button id="btn-settings-toggle" class="btn btn-ghost" title="Google Gemini API Key 設定">
-          <span class="icon">⚙️</span> API 設定
         </button>
       </div>
     </header>
 
-    <!-- 主工作區：左側輸入與辨識，右側高品質預覽與匯出 -->
+    <!-- 主工作區：左側貼圖自動辨識，右側預覽與匯出 Word -->
     <main class="workspace-split">
       
-      <!-- ================= 左欄：題目截圖輸入與 AI 控制 ================= -->
+      <!-- ================= 左欄：題目截圖輸入與純前端辨識結果 ================= -->
       <section class="panel-left">
         
-        <!-- 截圖輸入區 (支援貼上、拖放、點選) -->
+        <!-- 截圖輸入區 (支援貼上、拖放、點選，貼上即自動辨識) -->
         <div class="input-card">
           <div class="card-header">
-            <span class="card-title">📸 1. 貼上題目截圖</span>
-            <span class="card-badge">按下 Ctrl + V 立即貼上</span>
+            <span class="card-title">📸 1. 貼上題目截圖 (自動辨識)</span>
+            <span class="card-badge">免 API・純本機運算</span>
           </div>
           
           <div id="dropzone" class="dropzone">
             <!-- 尚未貼上截圖時 -->
             <div id="dropzone-empty" class="dropzone-empty">
               <div class="drop-icon">📋</div>
-              <h3>在網頁任意處按下 <kbd>Ctrl</kbd> + <kbd>V</kbd></h3>
-              <p>或將幾何題目圖片拖曳至此處，或 <label for="file-input" class="upload-link">從電腦選取檔案</label></p>
+              <h3>直接按下 <kbd>Ctrl</kbd> + <kbd>V</kbd> 貼上題目截圖</h3>
+              <p>或將圖片拖曳至此，或 <label for="file-input" class="upload-link">從電腦選取圖片檔</label></p>
               <input type="file" id="file-input" accept="image/*" style="display:none;">
             </div>
 
@@ -71,89 +66,75 @@
             <div id="dropzone-preview" class="dropzone-preview" style="display:none;">
               <img id="source-img" class="source-img" alt="題目截圖預覽">
               <div class="preview-overlay-bar">
-                <span id="img-info" class="img-info">截圖已就緒</span>
-                <button id="btn-remove-img" class="btn-sm btn-danger" title="更換截圖">更換圖片</button>
+                <span id="img-info" class="img-info">截圖已自動辨識</span>
+                <div style="display:flex; gap:6px;">
+                  <button id="btn-re-detect" class="btn-sm btn-primary" title="重新執行幾何辨識">🔄 重新辨識</button>
+                  <button id="btn-remove-img" class="btn-sm btn-danger" title="更換截圖">更換圖片</button>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- 快速測試範例題目 -->
           <div class="demo-samples">
-            <span class="demo-label">快速測試範例：</span>
-            <button id="btn-demo-incircle" class="btn-demo-pill">⭕ 課本高頻：三角形內切圓 (點擊體驗)</button>
+            <span class="demo-label">測試範例：</span>
+            <button id="btn-demo-incircle" class="btn-demo-pill">⭕ 載入範例：△ABC 內切圓 (實測純前端辨識)</button>
           </div>
         </div>
 
-        <!-- AI 金鑰與辨識控制卡 -->
+        <!-- 辨識解析報告與文字快速修訂卡 -->
         <div class="input-card">
           <div class="card-header">
-            <span class="card-title">🤖 2. Gemini 幾何智能辨識</span>
-            <span id="key-status-badge" class="badge-status-neutral">請先設定 Key</span>
+            <span class="card-title">🔍 2. 純前端幾何結構解析</span>
+            <span id="detect-status-badge" class="badge-status-ok">✅ 已完成向量重建</span>
           </div>
 
-          <div class="api-key-box">
-            <div class="api-row">
-              <label for="input-api-key">Gemini API Key：</label>
-              <div class="api-input-wrap">
-                <input type="password" id="input-api-key" placeholder="貼上您的 Gemini API Key (AIza...)" autocomplete="off">
-                <button id="btn-toggle-key-vis" class="btn-icon" title="顯示/隱藏金鑰">👁️</button>
-              </div>
-            </div>
-            
-            <div class="api-links">
-              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="link-get-key">
-                👉 點此前往 Google AI Studio 免費領取 Key (每日 1,500 次完全免費，免信用卡)
-              </a>
-            </div>
-
-            <!-- 隱私安全保證卡 -->
-            <div class="privacy-guarantee">
-              <span class="shield-icon">🔒</span>
-              <p><b>100% 隱私與資安承諾</b>：本網站為純靜態無伺服器架構，您的 API Key 僅保存在您本機瀏覽器（LocalStorage）中，直接與 Google 官方端點通訊，絕無任何第三方伺服器中轉，金鑰與圖片 100% 安全不外洩。</p>
-            </div>
+          <div id="detect-summary" class="detect-summary">
+            載入完成。貼上任何幾何截圖後，系統將透過純前端連通域分析、拓撲面圓形檢測與最小二乘直線擬合，自動重建幾何向量圖。
           </div>
 
-          <!-- 巨型一鍵 AI 辨識按鈕 -->
-          <button id="btn-run-ai" class="btn-run-ai" disabled>
-            <span class="btn-icon-sparkle">✨</span>
-            <span id="ai-btn-text"><b>開始 AI 智能辨識幾何題目</b></span>
+          <!-- 頂點與切點字母快速核對列 -->
+          <div class="labels-editor-box">
+            <div class="labels-editor-title">🔤 辨識出的字母標籤（點擊可直接改字，同步更新預覽與 Word）：</div>
+            <div id="labels-chip-list" class="labels-chip-list"></div>
+          </div>
+
+          <button id="btn-export-docx-left" class="btn-run-ai">
+            <span class="btn-icon-sparkle">📄</span>
+            <span><b>一鍵輸出 Word 可編輯版 (.docx)</b></span>
           </button>
 
-          <!-- 辨識進度與結果分析說明 -->
-          <div id="ai-status-card" class="ai-status-card" style="display:none;">
-            <div class="status-indicator">
-              <div class="spinner"></div>
-              <span id="status-text">AI 正在深度分析幾何關係與幾何座標...</span>
-            </div>
-            <div id="ai-result-desc" class="ai-result-desc" style="display:none;"></div>
+          <div class="privacy-guarantee" style="margin-top: 12px;">
+            <span class="shield-icon">⚡</span>
+            <p><b>100% 純前端幾何視覺引擎</b>：完全不需要 API Key、不連外網、零花費。匯出的 Word 檔內建微軟 Office 原生向量圖形（VML 線段、橢圓與獨立文字方塊），在 Word 中可直接點擊改字、拉動線條與換色！</p>
           </div>
         </div>
 
       </section>
 
-      <!-- ================= 右欄：課本印刷級幾何預覽與 Word 導出 ================= -->
+      <!-- ================= 右欄：辨識好的課本級預覽圖 ================= -->
       <section class="panel-right">
         
         <div class="preview-card">
           <div class="preview-header">
             <div class="preview-title-wrap">
-              <span class="preview-title">課本印刷級向量圖 (Word 可編輯版預覽)</span>
-              <span id="math-title-badge" class="badge-math">△ABC 內切圓</span>
+              <span class="preview-title">✨ 辨識重建預覽圖 (課本印刷風格)</span>
+              <span id="math-title-badge" class="badge-math">△ABC 內切圓 O</span>
             </div>
             
             <div class="preview-options">
               <label class="opt-label">
                 <input type="checkbox" id="chk-show-fill" checked>
-                <span>保留粉紅/幾何填色</span>
+                <span>保留原圖區域填色</span>
               </label>
               <label class="opt-label">
                 <input type="checkbox" id="chk-white-bg" checked>
-                <span>純白紙底色 (取消為透明底)</span>
+                <span>純白紙底色</span>
               </label>
             </div>
           </div>
 
-          <!-- 核心高解析 SVG 向量畫布 (800x600 比例) -->
+          <!-- 核心高解析 SVG 向量預覽畫布 (800x600) -->
           <div class="preview-stage-container" id="stage-container">
             <svg id="preview-svg" class="preview-svg" viewBox="0 0 800 600" width="800" height="600" xmlns="http://www.w3.org/2000/svg">
               <defs>
@@ -175,24 +156,24 @@
             </svg>
           </div>
 
-          <!-- 匯出與在 Word 中編輯之教學卡 -->
+          <!-- Word 原生編輯說明卡 -->
           <div class="word-guide-card">
             <div class="guide-header">
               <span class="guide-icon">💡</span>
-              <b>如何在 Microsoft Word 中自由編輯本幾何圖形？</b>
+              <b>匯出之 Word 檔 (.docx) 為 100% 微軟 Office 原生可編輯圖形：</b>
             </div>
             <div class="guide-steps">
               <div class="step-item">
                 <span class="step-num">1</span>
-                <span>點擊上方<b>「下載 Word 可編輯檔 (.docx)」</b>或將<b>「SVG 向量檔」</b>直接拖入 Word 試卷中。</span>
+                <span>點擊<b>「下載 Word 可編輯版 (.docx)」</b>並以 Microsoft Word 開啟檔案。</span>
               </div>
               <div class="step-item">
                 <span class="step-num">2</span>
-                <span>在 Word 中的幾何圖上按滑鼠右鍵，點選 <b>「轉換成圖形 (Convert to Shape)」</b>。</span>
+                <span>圖形由<b>原生線條、圓形與獨立斜體文字方塊 ($A, B, C\dots$)</b> 組成，直接點字母即可改字！</span>
               </div>
               <div class="step-item">
                 <span class="step-num">3</span>
-                <span>圖形瞬間轉為 Word 原生形狀！三角形頂點、內切圓、文字標籤皆可隨意點選拉動與改字！</span>
+                <span>在圖上按右鍵選擇<b>「群組 → 取消群組」</b>，即可單獨移動任一條線、放大縮小圓形或改變填色！</span>
               </div>
             </div>
           </div>
