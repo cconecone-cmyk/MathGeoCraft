@@ -1,5 +1,6 @@
 /**
  * MathGeoCraft - 課本習作幾何復刻神器
+ * 專注極速復刻幾何圖，支援 GeoGebra 尺規建構 (垂線、中垂線、角平分線、平行線、切線、中點)
  * 100% 純前端、零伺服器、零付費、免 API Key
  */
 
@@ -11,7 +12,7 @@
   // ==========================================
   const state = {
     vertices: [],       // { id, x, y, label, labelOffset: { dx, dy } }
-    segments: [],       // { id, v1Id, v2Id, style: 'solid'|'dashed'|'arrow'|'double-arrow', label, ticks: 0|1|2|3 }
+    segments: [],       // { id, v1Id, v2Id, style: 'solid'|'dashed'|'arrow'|'double-arrow', label, ticks: 0 }
     markers: [],        // { id, type: 'right-angle'|'angle-arc', vertexId, v1Id, v2Id, label, arcType }
     circles: [],        // { id, centerId, radius, style }
     shadings: [],       // { id, vertexIds: [] }
@@ -19,18 +20,17 @@
     bgImage: {
       src: null,
       opacity: 0.45,
-      visible: true,
-      naturalWidth: 800,
-      naturalHeight: 600
+      visible: true
     },
 
-    activeTool: 'select', // 'select' | 'polygon' | 'dashed-line' | 'right-angle' | 'angle-arc' | 'circle' | 'tick-mark' | 'shading'
-    selectedObject: null, // { type: 'vertex'|'segment'|'marker', id }
+    activeTool: 'select', 
+    selectedObject: null, // { type: 'vertex'|'segment'|'marker'|'circle', id }
     
     tempDrawing: {
-      polygonPoints: [], // 正在繪製多邊形的點 ID 清單
+      polygonPoints: [], 
       startVertexId: null,
-      currentMousePos: { x: 0, y: 0 }
+      selectedPointId: null, // 用於 GeoGebra 尺規作圖之第一步點選
+      selectedSegmentId: null
     },
 
     nextLabelIndex: 0,
@@ -59,7 +59,7 @@
   const layerVertices = document.getElementById('layer-vertices');
   const layerGuides = document.getElementById('layer-guides');
 
-  // 按鈕與控制項
+  // 頂部按鈕
   const btnUndoTop = document.getElementById('btn-undo-top');
   const btnDeleteTop = document.getElementById('btn-delete-top');
   const btnToggleBg = document.getElementById('btn-toggle-bg');
@@ -79,27 +79,8 @@
   const btnCloseHelp = document.getElementById('btn-close-help');
   const btnHelpOk = document.getElementById('btn-help-ok');
 
-  // 屬性面板元素
-  const selectionEmptyHint = document.getElementById('selection-empty-hint');
-  const selectionControls = document.getElementById('selection-controls');
-  const vertexPropGroup = document.getElementById('vertex-prop-group');
-  const segmentPropGroup = document.getElementById('segment-prop-group');
-  const anglePropGroup = document.getElementById('angle-prop-group');
-  const circlePropGroup = document.getElementById('circle-prop-group');
-  const propVertexLabel = document.getElementById('prop-vertex-label');
-  const propSegStyle = document.getElementById('prop-seg-style');
-  const propSegLabel = document.getElementById('prop-seg-label');
-  const propSegTicks = document.getElementById('prop-seg-ticks');
-  const propAngleLabel = document.getElementById('prop-angle-label');
-  const propAngleType = document.getElementById('prop-angle-type');
-  const propCircleRadiusSlider = document.getElementById('prop-circle-radius-slider');
-  const propCircleRadiusNum = document.getElementById('prop-circle-radius-num');
-  const circleRadiusVal = document.getElementById('circle-radius-val');
-  const propCircleStyle = document.getElementById('prop-circle-style');
-  const btnDeleteSelected = document.getElementById('btn-delete-selected');
-
   // ==========================================
-  // 工具與幾何輔助函式
+  // 幾何核心數學與輔助函式
   // ==========================================
   function generateId(prefix = 'obj') {
     return `${prefix}_${Math.random().toString(36).substr(2, 9)}`;
@@ -136,9 +117,9 @@
     state.shadings = prev.shadings;
     state.nextLabelIndex = prev.nextLabelIndex;
     state.selectedObject = null;
-    updateSelectionPanel();
+    updateSelectionState();
     render();
-    showToast('已復原上一步操作');
+    showToast('已復原上一步操作 (Undo)');
   }
 
   function dist(x1, y1, x2, y2) {
@@ -167,7 +148,28 @@
     );
   }
 
-  // 智慧吸附演算法 (水平、垂直、直角吸附)
+  // 尋找滑鼠附近的線段 (用於 GeoGebra 點選目標線)
+  function findSegmentNearPoint(x, y, threshold = 12) {
+    for (const seg of state.segments) {
+      const v1 = findVertexById(seg.v1Id);
+      const v2 = findVertexById(seg.v2Id);
+      if (!v1 || !v2) continue;
+      const dx = v2.x - v1.x;
+      const dy = v2.y - v1.y;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) continue;
+      let t = ((x - v1.x) * dx + (y - v1.y) * dy) / lenSq;
+      t = Math.max(0, Math.min(1, t));
+      const projX = v1.x + t * dx;
+      const projY = v1.y + t * dy;
+      if (dist(x, y, projX, projY) <= threshold) {
+        return seg;
+      }
+    }
+    return null;
+  }
+
+  // 智慧吸附 (水平、垂直對齊)
   function applySnapping(pos, ignoreVertexId = null) {
     if (!document.getElementById('chk-snap').checked) return pos;
 
@@ -175,7 +177,6 @@
     let snappedY = pos.y;
     let guideLines = [];
 
-    // 1. 水平與鉛直對齊其他頂點
     for (const v of state.vertices) {
       if (v.id === ignoreVertexId) continue;
       if (Math.abs(pos.y - v.y) < 8) {
@@ -209,8 +210,7 @@
     layerGuides.innerHTML = '';
   }
 
-  // 提示訊息浮籤
-  function showToast(msg, duration = 2500) {
+  function showToast(msg, duration = 2600) {
     let toast = document.getElementById('app-toast');
     if (!toast) {
       toast = document.createElement('div');
@@ -220,13 +220,13 @@
         bottom: 48px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(15, 23, 42, 0.95);
+        background: rgba(15, 23, 42, 0.96);
         border: 1px solid #6366f1;
         color: #f8fafc;
-        padding: 8px 18px;
+        padding: 8px 20px;
         border-radius: 20px;
         font-size: 13px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.6);
         z-index: 999;
         pointer-events: none;
         transition: opacity 0.2s;
@@ -242,7 +242,7 @@
   }
 
   // ==========================================
-  // 底圖載入與貼上機制 (Ctrl + V)
+  // 底圖管理 (Ctrl + V 貼上截圖)
   // ==========================================
   function loadBackgroundImage(src) {
     state.bgImage.src = src;
@@ -253,19 +253,16 @@
     btnToggleBg.classList.remove('btn-secondary');
     btnToggleBg.classList.add('btn-primary');
     bgToggleText.textContent = '隱藏底圖';
-    showToast('✨ 截圖已貼上！現在可直接描摹或套用樣板');
+    showToast('✨ 截圖已貼上！可直接描摹或點擊樣板對齊');
   }
 
-  // 剪貼簿貼上事件監聽 (Ctrl + V)
   window.addEventListener('paste', (e) => {
     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
     for (const item of items) {
       if (item.type.indexOf('image') !== -1) {
         const blob = item.getAsFile();
         const reader = new FileReader();
-        reader.onload = (event) => {
-          loadBackgroundImage(event.target.result);
-        };
+        reader.onload = (event) => loadBackgroundImage(event.target.result);
         reader.readAsDataURL(blob);
         e.preventDefault();
         return;
@@ -273,7 +270,6 @@
     }
   });
 
-  // 拖放圖片
   window.addEventListener('dragover', (e) => e.preventDefault());
   window.addEventListener('drop', (e) => {
     e.preventDefault();
@@ -295,7 +291,6 @@
     }
   });
 
-  // 底圖切換與透明度
   btnToggleBg.addEventListener('click', toggleBackground);
   function toggleBackground() {
     if (!state.bgImage.src) {
@@ -305,7 +300,7 @@
     state.bgImage.visible = !state.bgImage.visible;
     bgImg.style.display = state.bgImage.visible ? 'block' : 'none';
     bgToggleText.textContent = state.bgImage.visible ? '隱藏底圖' : '顯示底圖';
-    showToast(state.bgImage.visible ? '底圖已顯示' : '底圖已隱藏 (課本印刷預覽模式)');
+    showToast(state.bgImage.visible ? '底圖已顯示' : '底圖已隱藏 (課本印刷純淨模式)');
   }
 
   bgOpacitySlider.addEventListener('input', (e) => {
@@ -325,7 +320,7 @@
   });
 
   // ==========================================
-  // 工具列切換與樣板加入
+  // 工具列切換與 GeoGebra 提示
   // ==========================================
   const toolBtns = document.querySelectorAll('.tool-btn');
   toolBtns.forEach(btn => {
@@ -342,16 +337,21 @@
     clearGuides();
     render();
 
-    // 更新狀態列提示
     const hints = {
-      'select': '選取工具：拖曳頂點改變位置；點擊圖元可在右側修改屬性。',
-      'polygon': '實線多邊形：點擊畫布依序打點連線，點回起點可自動封閉多邊形。',
-      'dashed-line': '輔助虛線：點擊兩個頂點，快速加入課本虛線輔助線。',
-      'right-angle': '直角記號：依序點選 頂點 → 相鄰頂點 1 → 相鄰頂點 2，加入直角折角。',
-      'angle-arc': '角度圓弧：依序點選 頂點 → 相鄰頂點 1 → 相鄰頂點 2，加入角度圓弧與角度標記。',
-      'circle': '圓形繪製：點擊圓心並拖曳產生圓形。',
-      'tick-mark': '等長標記：點擊任一線段，可循環切換單斜槓 / 雙斜槓等長標記。',
-      'shading': '陰影鋪色：順序點選頂點包圍幾何區域，點回起點完成陰影填色。'
+      'select': '選取工具：拖曳頂點調整線段長短；拖曳線條平移；拖曳圓周把手縮放圓形；雙擊可改字或切換虛線。',
+      'segment': '實線線段：依序點擊兩點連成實線線段。',
+      'dashed-line': '輔助虛線：依序點擊兩點連成課本虛線輔助線。',
+      'circle': '圓形：按住滑鼠向外拖曳，直接拉出所需大小的圓。',
+      'polygon': '多邊形：點擊畫布依序打點，點回起點完成封閉。',
+      'right-angle': '直角記號：依序點選 頂點 → 邊1 → 邊2，加上課本直角符號。',
+      'angle-arc': '角度圓弧：依序點選 頂點 → 邊1 → 邊2，加上角度弧線與角度文字。',
+      'shading': '陰影鋪色：點選頂點包圍幾何區域，點回起點完成填色。',
+      'perpendicular': '📐【過點垂線】請先點選「頂點 (如 A)」，再點選「對邊線段」，自動垂直作高並標出直角。',
+      'bisector': '📐【中垂線】請直接點選任一「線段」，自動找出中點並作垂直平分線。',
+      'angle-bisector': '📐【角平分線】依序點選「邊點 1」→「角頂點」→「邊點 2」，自動作角平分線。',
+      'parallel': '📐【平行線】請先點選「頂點」，再點選「參考線段」，自動繪製過該點之平行線。',
+      'tangent': '📐【圓切線】請先點選「圓外點」，再點選「圓周」，自動產生切線與切點垂直半徑。',
+      'midpoint': '📐【找中點】請直接點選任一「線段」，自動標出幾何中點 M。'
     };
     statusHint.textContent = `💡 ${hints[toolName] || ''}`;
   }
@@ -359,11 +359,14 @@
   function resetTempDrawing() {
     state.tempDrawing.polygonPoints = [];
     state.tempDrawing.startVertexId = null;
-    state.tempDrawing.currentMousePos = { x: 0, y: 0 };
+    state.tempDrawing.selectedPointId = null;
+    state.tempDrawing.selectedSegmentId = null;
     clearGuides();
   }
 
-  // 快速樣板清單 (一鍵放置教科書標準幾何物件)
+  // ==========================================
+  // 國中課本最高頻樣板 (等長部分一律不畫記，乾淨純粹)
+  // ==========================================
   const presetBtns = document.querySelectorAll('.preset-btn');
   presetBtns.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -376,7 +379,7 @@
     pushHistory();
     pasteHero.style.display = 'none';
 
-    // 1. 國中最高頻：相似形與比例線段
+    // 1. 相似形與比例 (九年級)
     if (presetName === 'similar-a') {
       const vA = addVertex(400, 140, 'A', { dx: 0, dy: -14 });
       const vB = addVertex(240, 460, 'B', { dx: -18, dy: 10 });
@@ -386,8 +389,8 @@
       addSegment(vA.id, vB.id, 'solid');
       addSegment(vB.id, vC.id, 'solid');
       addSegment(vC.id, vA.id, 'solid');
-      const sDE = addSegment(vD.id, vE.id, 'solid');
-      showToast('已加入國中段考冠軍【A 字形平行截線相似 (DE // BC)】');
+      addSegment(vD.id, vE.id, 'solid');
+      showToast('已加入【A 字相似形 (DE // BC)】');
     }
     else if (presetName === 'similar-hourglass') {
       const vA = addVertex(280, 170, 'A', { dx: -14, dy: -10 });
@@ -399,7 +402,7 @@
       addSegment(vC.id, vD.id, 'solid');
       addSegment(vA.id, vD.id, 'solid');
       addSegment(vB.id, vC.id, 'solid');
-      showToast('已加入【8 字形 / 沙漏形交叉相似】');
+      showToast('已加入【8 字沙漏相似】');
     }
     else if (presetName === 'right-altitude') {
       const vA = addVertex(380, 180, 'A', { dx: 0, dy: -14 });
@@ -412,21 +415,21 @@
       addSegment(vA.id, vH.id, 'dashed'); // 斜邊上的高
       addMarker('right-angle', vA.id, vB.id, vC.id);
       addMarker('right-angle', vH.id, vA.id, vC.id);
-      showToast('已加入段考必考【母子相似定理（直角△斜邊高）】');
+      showToast('已加入【母子相似定理（直角△斜邊高）】');
     }
 
-    // 2. 國中最高頻：圓形單元
+    // 2. 圓形高頻
     else if (presetName === 'chord-distance') {
       const vO = addVertex(400, 270, 'O', { dx: 12, dy: -10 });
       const vA = addVertex(277, 360, 'A', { dx: -16, dy: 10 });
       const vB = addVertex(523, 360, 'B', { dx: 16, dy: 10 });
       const vM = addVertex(400, 360, 'M', { dx: 0, dy: 18 });
       state.circles.push({ id: generateId('cir'), centerId: vO.id, radius: 150, style: 'solid' });
-      const sAB = addSegment(vA.id, vB.id, 'solid');
-      addSegment(vO.id, vA.id, 'dashed'); // 半徑 r
-      addSegment(vO.id, vM.id, 'dashed'); // 弦心距 d
+      addSegment(vA.id, vB.id, 'solid');
+      addSegment(vO.id, vA.id, 'dashed');
+      addSegment(vO.id, vM.id, 'dashed');
       addMarker('right-angle', vM.id, vO.id, vB.id);
-      showToast('已加入圓形神題【垂徑定理與弦心距直角△】');
+      showToast('已加入【垂徑定理與弦心距直角△】');
     }
     else if (presetName === 'tangent-kite') {
       const vO = addVertex(480, 300, 'O', { dx: 14, dy: 0 });
@@ -441,7 +444,7 @@
       addSegment(vP.id, vO.id, 'dashed');
       addMarker('right-angle', vA.id, vP.id, vO.id);
       addMarker('right-angle', vB.id, vP.id, vO.id);
-      showToast('已加入【圓外一點作雙切線（鳶形 PAOB）】');
+      showToast('已加入【圓外雙切線鳶形 PAOB】');
     }
     else if (presetName === 'inscribed-angle') {
       const vO = addVertex(400, 310, 'O', { dx: 12, dy: 12 });
@@ -455,7 +458,7 @@
       addSegment(vO.id, vC.id, 'dashed');
       addMarker('angle-arc', vA.id, vB.id, vC.id, 'x');
       addMarker('angle-arc', vO.id, vB.id, vC.id, '2x');
-      showToast('已加入【圓心角與圓周角關係（2倍角）】');
+      showToast('已加入【圓心角與圓周角關係】');
     }
     else if (presetName === 'cyclic-quad') {
       const vO = addVertex(400, 300, 'O', { dx: 10, dy: 10 });
@@ -468,10 +471,10 @@
       addSegment(vB.id, vC.id, 'solid');
       addSegment(vC.id, vD.id, 'solid');
       addSegment(vD.id, vA.id, 'solid');
-      showToast('已加入【圓內接四邊形（對角互補）】');
+      showToast('已加入【圓內接四邊形】');
     }
 
-    // 3. 國中最高頻：全等三角形與特殊性質
+    // 3. 畢氏定理與三角形全等 (等長部分皆不畫記)
     else if (presetName === 'right-triangle') {
       const vA = addVertex(280, 160, 'A', { dx: -8, dy: -12 });
       const vB = addVertex(280, 440, 'B', { dx: -18, dy: 10 });
@@ -480,19 +483,19 @@
       addSegment(vB.id, vC.id, 'solid');
       addSegment(vC.id, vA.id, 'solid');
       addMarker('right-angle', vB.id, vA.id, vC.id);
-      showToast('已加入【畢氏定理直角三角形】');
+      showToast('已加入【畢氏直角△】');
     } 
     else if (presetName === 'isosceles-triangle') {
       const vA = addVertex(400, 150, 'A', { dx: 0, dy: -14 });
       const vB = addVertex(240, 450, 'B', { dx: -18, dy: 10 });
       const vC = addVertex(560, 450, 'C', { dx: 14, dy: 10 });
       const vD = addVertex(400, 450, 'D', { dx: 0, dy: 16 });
-      const s1 = addSegment(vA.id, vB.id, 'solid'); s1.ticks = 1;
-      const s2 = addSegment(vA.id, vC.id, 'solid'); s2.ticks = 1;
+      addSegment(vA.id, vB.id, 'solid');
+      addSegment(vA.id, vC.id, 'solid');
       addSegment(vB.id, vC.id, 'solid');
-      addSegment(vA.id, vD.id, 'dashed'); // 垂直高線
+      addSegment(vA.id, vD.id, 'dashed'); // 垂直高
       addMarker('right-angle', vD.id, vA.id, vC.id);
-      showToast('已加入【等腰三角形（底邊垂直平分高）】');
+      showToast('已加入【等腰△與垂直高】');
     }
     else if (presetName === 'angle-bisector-dist') {
       const vO = addVertex(220, 430, 'O', { dx: -16, dy: 12 });
@@ -504,20 +507,20 @@
       addSegment(vO.id, vA.id, 'solid');
       addSegment(vO.id, vB.id, 'solid');
       addSegment(vO.id, vP.id, 'dashed'); // 角平分線射線
-      const sPD = addSegment(vP.id, vD.id, 'dashed'); sPD.ticks = 1;
-      const sPE = addSegment(vP.id, vE.id, 'dashed'); sPE.ticks = 1;
+      addSegment(vP.id, vD.id, 'dashed');
+      addSegment(vP.id, vE.id, 'dashed');
       addMarker('right-angle', vD.id, vP.id, vA.id);
       addMarker('right-angle', vE.id, vP.id, vB.id);
-      showToast('已加入【角平分線性質（到角兩邊等距離垂線）】');
+      showToast('已加入【角平分線性質】');
     }
     else if (presetName === 'equilateral-triangle') {
       const vA = addVertex(400, 150, 'A', { dx: 0, dy: -14 });
       const vB = addVertex(230, 450, 'B', { dx: -16, dy: 10 });
       const vC = addVertex(570, 450, 'C', { dx: 14, dy: 10 });
-      const s1 = addSegment(vA.id, vB.id, 'solid'); s1.ticks = 2;
-      const s2 = addSegment(vB.id, vC.id, 'solid'); s2.ticks = 2;
-      const s3 = addSegment(vC.id, vA.id, 'solid'); s3.ticks = 2;
-      showToast('已加入【正三角形（三邊等長標記）】');
+      addSegment(vA.id, vB.id, 'solid');
+      addSegment(vB.id, vC.id, 'solid');
+      addSegment(vC.id, vA.id, 'solid');
+      showToast('已加入【正三角形】');
     }
 
     // 4. 特殊四邊形與坐標平面
@@ -557,7 +560,7 @@
       const vY2 = addVertex(400, 100, 'y', { dx: -14, dy: -12 });
       addSegment(vX1.id, vX2.id, 'arrow');
       addSegment(vY1.id, vY2.id, 'arrow');
-      showToast('已加入【直角坐標系（附箭頭與原點）】');
+      showToast('已加入【直角坐標系】');
     }
 
     setTool('select');
@@ -606,17 +609,15 @@
   }
 
   // ==========================================
-  // SVG 畫布互動與繪圖事件
+  // SVG 畫布互動與繪圖事件 (支援拖曳改長短與 GeoGebra 建構)
   // ==========================================
   let isDragging = false;
-  let dragTarget = null;
-  let dragOffset = { x: 0, y: 0 };
-  let clickBuffer = []; // 用於記錄需要多點點擊的操作 (如直角符號、角度圓弧)
+  let dragTarget = null; // { type: 'vertex'|'circle-radius'|'creating-circle'|'segment-move', ... }
+  let clickBuffer = []; 
 
   svg.addEventListener('mousemove', (e) => {
     const pos = getMouseSVGCoords(e);
     canvasCoords.textContent = `X: ${pos.x}, Y: ${pos.y}`;
-    state.tempDrawing.currentMousePos = pos;
 
     if (isDragging && dragTarget) {
       if (dragTarget.type === 'vertex') {
@@ -635,19 +636,26 @@
           const c = state.circles.find(cir => cir.id === cirId);
           if (c) {
             c.radius = r;
-            if (propCircleRadiusSlider) {
-              propCircleRadiusSlider.value = r;
-              propCircleRadiusNum.value = r;
-              circleRadiusVal.textContent = r;
-            }
             render();
           }
+        }
+      } else if (dragTarget.type === 'segment-move') {
+        const dx = pos.x - dragTarget.startPos.x;
+        const dy = pos.y - dragTarget.startPos.y;
+        const v1 = findVertexById(dragTarget.v1Id);
+        const v2 = findVertexById(dragTarget.v2Id);
+        if (v1 && v2) {
+          v1.x = dragTarget.v1Start.x + dx;
+          v1.y = dragTarget.v1Start.y + dy;
+          v2.x = dragTarget.v2Start.x + dx;
+          v2.y = dragTarget.v2Start.y + dy;
+          render();
         }
       }
       return;
     }
 
-    // 繪製多邊形過程中的動態導引線
+    // 繪製多邊形或線段過程中的動態導引線
     if (state.activeTool === 'polygon' && state.tempDrawing.polygonPoints.length > 0) {
       const lastVId = state.tempDrawing.polygonPoints[state.tempDrawing.polygonPoints.length - 1];
       const lastV = findVertexById(lastVId);
@@ -660,31 +668,72 @@
   svg.addEventListener('mousedown', (e) => {
     const pos = getMouseSVGCoords(e);
     const nearV = findVertexNear(pos.x, pos.y);
+    const nearSeg = findSegmentNearPoint(pos.x, pos.y);
 
+    // 1. 選取與移動模式 (Select & Move) - 可自由拖曳頂點改變長短
     if (state.activeTool === 'select') {
       if (nearV) {
         isDragging = true;
         dragTarget = { type: 'vertex', id: nearV.id };
         state.selectedObject = { type: 'vertex', id: nearV.id };
-        updateSelectionPanel();
+        updateSelectionState();
+        render();
+        pushHistory();
+      } else if (nearSeg) {
+        // 拖曳線段本體可平移整條線
+        isDragging = true;
+        const v1 = findVertexById(nearSeg.v1Id);
+        const v2 = findVertexById(nearSeg.v2Id);
+        dragTarget = {
+          type: 'segment-move',
+          v1Id: nearSeg.v1Id,
+          v2Id: nearSeg.v2Id,
+          startPos: pos,
+          v1Start: { x: v1.x, y: v1.y },
+          v2Start: { x: v2.x, y: v2.y }
+        };
+        state.selectedObject = { type: 'segment', id: nearSeg.id };
+        updateSelectionState();
         render();
         pushHistory();
       } else {
         state.selectedObject = null;
-        updateSelectionPanel();
+        updateSelectionState();
         render();
       }
       return;
     }
 
+    // 2. 實線線段 (Segment) / 輔助虛線 (Dashed)
+    if (state.activeTool === 'segment' || state.activeTool === 'dashed-line') {
+      let targetV = nearV;
+      if (!targetV) {
+        const snapped = applySnapping(pos);
+        targetV = addVertex(snapped.x, snapped.y);
+      }
+
+      if (!state.tempDrawing.startVertexId) {
+        state.tempDrawing.startVertexId = targetV.id;
+        showToast(`已選取起點 [${targetV.label || '·'}]，請點選終點`);
+      } else {
+        pushHistory();
+        const style = state.activeTool === 'dashed-line' ? 'dashed' : 'solid';
+        addSegment(state.tempDrawing.startVertexId, targetV.id, style);
+        showToast(`線段已繪製！可在選取模式下拖曳兩端調整長短`);
+        state.tempDrawing.startVertexId = null;
+        render();
+      }
+      return;
+    }
+
+    // 3. 連續多邊形 (Polygon)
     if (state.activeTool === 'polygon') {
       pushHistory();
       let targetV = nearV;
-      // 如果點擊了起點，則封閉多邊形完成
       if (state.tempDrawing.polygonPoints.length >= 2 && nearV && nearV.id === state.tempDrawing.polygonPoints[0]) {
         const lastVId = state.tempDrawing.polygonPoints[state.tempDrawing.polygonPoints.length - 1];
         addSegment(lastVId, nearV.id, 'solid');
-        showToast('多邊形已完成封閉！');
+        showToast('多邊形已封閉！');
         resetTempDrawing();
         render();
         return;
@@ -705,58 +754,7 @@
       return;
     }
 
-    if (state.activeTool === 'dashed-line') {
-      let targetV = nearV;
-      if (!targetV) {
-        const snapped = applySnapping(pos);
-        targetV = addVertex(snapped.x, snapped.y);
-      }
-
-      if (!state.tempDrawing.startVertexId) {
-        state.tempDrawing.startVertexId = targetV.id;
-        showToast(`已選取起點 ${targetV.label || ''}，請點擊終點`);
-      } else {
-        pushHistory();
-        addSegment(state.tempDrawing.startVertexId, targetV.id, 'dashed');
-        showToast('課本虛線輔助線已加入！');
-        state.tempDrawing.startVertexId = null;
-        render();
-      }
-      return;
-    }
-
-    if (state.activeTool === 'right-angle' || state.activeTool === 'angle-arc') {
-      if (!nearV) {
-        showToast('請點選一個頂點');
-        return;
-      }
-
-      clickBuffer.push(nearV.id);
-
-      if (clickBuffer.length === 1) {
-        showToast(`頂點已選取 [${nearV.label || 'V'}]，請接著點選第 1 個夾角邊頂點`);
-      } else if (clickBuffer.length === 2) {
-        showToast(`已選取第 1 邊，請點選第 2 個夾角邊頂點`);
-      } else if (clickBuffer.length === 3) {
-        pushHistory();
-        const vertexId = clickBuffer[0];
-        const v1Id = clickBuffer[1];
-        const v2Id = clickBuffer[2];
-
-        if (state.activeTool === 'right-angle') {
-          addMarker('right-angle', vertexId, v1Id, v2Id);
-          showToast('直角記號已加入！');
-        } else {
-          const arcLabel = prompt('請輸入角度文字（如 60°、θ、∠1），或留空僅顯示圓弧：', '60°');
-          addMarker('angle-arc', vertexId, v1Id, v2Id, arcLabel || '');
-          showToast('角度圓弧已加入！');
-        }
-        clickBuffer = [];
-        render();
-      }
-      return;
-    }
-
+    // 4. 圓形 (Circle) - 拖曳式即時放大幅度
     if (state.activeTool === 'circle') {
       let centerV = nearV;
       if (!centerV) {
@@ -775,17 +773,54 @@
       isDragging = true;
       dragTarget = { type: 'creating-circle', circle: newCir, center: centerV };
       render();
-      showToast('⭕ 按住滑鼠拖曳可直接調整圓形大小，放開即可完成！');
+      showToast('⭕ 按住滑鼠拖曳可直接放大縮小圓形，放開即可完成！');
       return;
     }
 
-    if (state.activeTool === 'tick-mark') {
-      // 尋找最近的線段
-      showToast('請在「選取模式」下點擊線段，直接於右側切換單/雙斜槓標記');
-      setTool('select');
+    // 5. 直角記號 (Right Angle)
+    if (state.activeTool === 'right-angle') {
+      if (!nearV) {
+        showToast('請點選角頂點');
+        return;
+      }
+      clickBuffer.push(nearV.id);
+      if (clickBuffer.length === 1) {
+        showToast(`已選角頂點 [${nearV.label || 'V'}]，請點第 1 個邊頂點`);
+      } else if (clickBuffer.length === 2) {
+        showToast('請點第 2 個邊頂點');
+      } else if (clickBuffer.length === 3) {
+        pushHistory();
+        addMarker('right-angle', clickBuffer[0], clickBuffer[1], clickBuffer[2]);
+        showToast('直角折角符號已加入！');
+        clickBuffer = [];
+        render();
+      }
       return;
     }
 
+    // 6. 角度圓弧 (Angle Arc)
+    if (state.activeTool === 'angle-arc') {
+      if (!nearV) {
+        showToast('請點選角頂點');
+        return;
+      }
+      clickBuffer.push(nearV.id);
+      if (clickBuffer.length === 1) {
+        showToast(`已選角頂點 [${nearV.label || 'V'}]，請點第 1 個邊頂點`);
+      } else if (clickBuffer.length === 2) {
+        showToast('請點第 2 個邊頂點');
+      } else if (clickBuffer.length === 3) {
+        pushHistory();
+        const arcLabel = prompt('請輸入角度文字（如 60°、θ、∠1），留空僅畫弧線：', '60°');
+        addMarker('angle-arc', clickBuffer[0], clickBuffer[1], clickBuffer[2], arcLabel || '');
+        showToast('角度圓弧已加入！');
+        clickBuffer = [];
+        render();
+      }
+      return;
+    }
+
+    // 7. 陰影鋪色 (Shading)
     if (state.activeTool === 'shading') {
       if (!nearV) {
         showToast('請點選陰影多邊形的頂點');
@@ -807,6 +842,219 @@
       }
       return;
     }
+
+    // ==========================================
+    // GeoGebra 尺規建構工具
+    // ==========================================
+
+    // 8. 過點作垂線 (Perpendicular / 高)
+    if (state.activeTool === 'perpendicular') {
+      if (!state.tempDrawing.selectedPointId) {
+        if (!nearV) {
+          showToast('第 1 步：請點選要作高／垂線的「頂點 (如 A)」');
+          return;
+        }
+        state.tempDrawing.selectedPointId = nearV.id;
+        showToast(`已選取頂點 [${nearV.label || 'P'}]！第 2 步：請點選目標線段`);
+      } else {
+        if (!nearSeg) {
+          showToast('請點選要作垂線的「目標線段」');
+          return;
+        }
+        pushHistory();
+        const P = findVertexById(state.tempDrawing.selectedPointId);
+        const A = findVertexById(nearSeg.v1Id);
+        const B = findVertexById(nearSeg.v2Id);
+        
+        // 投影求垂足 H
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+        const lenSq = dx * dx + dy * dy;
+        const t = ((P.x - A.x) * dx + (P.y - A.y) * dy) / lenSq;
+        const Hx = Math.round(A.x + t * dx);
+        const Hy = Math.round(A.y + t * dy);
+
+        const vH = addVertex(Hx, Hy, 'H', { dx: 0, dy: 16 });
+        addSegment(P.id, vH.id, 'dashed'); // 垂線高線
+        addMarker('right-angle', vH.id, P.id, B.id); // 自動加入直角記號
+        showToast('✅ 垂線（高）與直角記號已自動建構完成！');
+        resetTempDrawing();
+        setTool('select');
+        render();
+      }
+      return;
+    }
+
+    // 9. 垂直平分線 (Perpendicular Bisector / 中垂線)
+    if (state.activeTool === 'bisector') {
+      if (!nearSeg) {
+        showToast('請點選要作中垂線的「線段」');
+        return;
+      }
+      pushHistory();
+      const A = findVertexById(nearSeg.v1Id);
+      const B = findVertexById(nearSeg.v2Id);
+      const Mx = Math.round((A.x + B.x) / 2);
+      const My = Math.round((A.y + B.y) / 2);
+      const vM = addVertex(Mx, My, 'M', { dx: 0, dy: 16 });
+
+      const dx = B.x - A.x;
+      const dy = B.y - A.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      const bisectorLen = 90;
+
+      const p1 = addVertex(Math.round(Mx + nx * bisectorLen), Math.round(My + ny * bisectorLen), '', { dx: 0, dy: 0 });
+      const p2 = addVertex(Math.round(Mx - nx * bisectorLen), Math.round(My - ny * bisectorLen), '', { dx: 0, dy: 0 });
+      addSegment(p1.id, p2.id, 'dashed');
+      addMarker('right-angle', vM.id, p1.id, B.id);
+      showToast('✅ 中垂線（垂直平分線）與直角記號已自動建構完成！');
+      setTool('select');
+      render();
+      return;
+    }
+
+    // 10. 角平分線 (Angle Bisector)
+    if (state.activeTool === 'angle-bisector') {
+      if (!nearV) {
+        showToast('請依序點選：[邊點 1] → [角頂點] → [邊點 2]');
+        return;
+      }
+      clickBuffer.push(nearV.id);
+      if (clickBuffer.length === 1) {
+        showToast(`已選第 1 邊頂點 [${nearV.label || 'A'}]，請接著點選「角頂點」`);
+      } else if (clickBuffer.length === 2) {
+        showToast(`已選角頂點 [${nearV.label || 'B'}]，請點選「第 2 邊頂點」`);
+      } else if (clickBuffer.length === 3) {
+        pushHistory();
+        const vA = findVertexById(clickBuffer[0]);
+        const vB = findVertexById(clickBuffer[1]); // 角頂點
+        const vC = findVertexById(clickBuffer[2]);
+
+        const d1 = Math.hypot(vA.x - vB.x, vA.y - vB.y) || 1;
+        const d2 = Math.hypot(vC.x - vB.x, vC.y - vB.y) || 1;
+        const u1x = (vA.x - vB.x) / d1;
+        const u1y = (vA.y - vB.y) / d1;
+        const u2x = (vC.x - vB.x) / d2;
+        const u2y = (vC.y - vB.y) / d2;
+        const bx = u1x + u2x;
+        const by = u1y + u2y;
+        const bLen = Math.hypot(bx, by) || 1;
+        const rayLen = 160;
+
+        const pRay = addVertex(Math.round(vB.x + (bx / bLen) * rayLen), Math.round(vB.y + (by / bLen) * rayLen), '', { dx: 0, dy: 0 });
+        addSegment(vB.id, pRay.id, 'dashed');
+        showToast('✅ 角平分線已自動繪製！');
+        clickBuffer = [];
+        setTool('select');
+        render();
+      }
+      return;
+    }
+
+    // 11. 平行線 (Parallel Line)
+    if (state.activeTool === 'parallel') {
+      if (!state.tempDrawing.selectedPointId) {
+        if (!nearV) {
+          showToast('第 1 步：請點選平行線要通過的「頂點」');
+          return;
+        }
+        state.tempDrawing.selectedPointId = nearV.id;
+        showToast(`已選取頂點 [${nearV.label || 'P'}]！第 2 步：請點選要平行的「參考線段」`);
+      } else {
+        if (!nearSeg) {
+          showToast('請點選要平行的「參考線段」');
+          return;
+        }
+        pushHistory();
+        const P = findVertexById(state.tempDrawing.selectedPointId);
+        const A = findVertexById(nearSeg.v1Id);
+        const B = findVertexById(nearSeg.v2Id);
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+
+        const p1 = addVertex(Math.round(P.x - dx * 0.5), Math.round(P.y - dy * 0.5), '', { dx: 0, dy: 0 });
+        const p2 = addVertex(Math.round(P.x + dx * 0.5), Math.round(P.y + dy * 0.5), '', { dx: 0, dy: 0 });
+        addSegment(p1.id, p2.id, 'dashed');
+        showToast('✅ 平行線已自動繪製！');
+        resetTempDrawing();
+        setTool('select');
+        render();
+      }
+      return;
+    }
+
+    // 12. 圓切線 (Tangent Line)
+    if (state.activeTool === 'tangent') {
+      if (!state.tempDrawing.selectedPointId) {
+        if (!nearV) {
+          showToast('第 1 步：請點選圓外一點 P');
+          return;
+        }
+        state.tempDrawing.selectedPointId = nearV.id;
+        showToast(`已選取點 [${nearV.label || 'P'}]！第 2 步：請點選圓形`);
+      } else {
+        if (state.circles.length === 0) {
+          showToast('畫布上尚無圓形');
+          return;
+        }
+        const P = findVertexById(state.tempDrawing.selectedPointId);
+        const cir = state.circles[0];
+        const O = findVertexById(cir.centerId);
+        const d = dist(P.x, P.y, O.x, O.y);
+        const R = cir.radius;
+
+        if (d <= R) {
+          showToast('點在圓內部，無法作實數切線');
+          return;
+        }
+
+        pushHistory();
+        const baseAngle = Math.atan2(P.y - O.y, P.x - O.x);
+        const alpha = Math.acos(R / d);
+
+        const a1 = baseAngle + alpha;
+        const a2 = baseAngle - alpha;
+        const t1X = Math.round(O.x + Math.cos(a1) * R);
+        const t1Y = Math.round(O.y + Math.sin(a1) * R);
+        const t2X = Math.round(O.x + Math.cos(a2) * R);
+        const t2Y = Math.round(O.y + Math.sin(a2) * R);
+
+        const vT1 = addVertex(t1X, t1Y, 'A', { dx: 0, dy: -14 });
+        const vT2 = addVertex(t2X, t2Y, 'B', { dx: 0, dy: 16 });
+        addSegment(P.id, vT1.id, 'solid');
+        addSegment(P.id, vT2.id, 'solid');
+        addSegment(O.id, vT1.id, 'dashed'); // 切點垂直半徑
+        addSegment(O.id, vT2.id, 'dashed');
+        addMarker('right-angle', vT1.id, P.id, O.id);
+        addMarker('right-angle', vT2.id, P.id, O.id);
+
+        showToast('✅ 圓雙切線與垂直半徑已自動建構完成！');
+        resetTempDrawing();
+        setTool('select');
+        render();
+      }
+      return;
+    }
+
+    // 13. 找中點 (Midpoint)
+    if (state.activeTool === 'midpoint') {
+      if (!nearSeg) {
+        showToast('請點選任一線段以標出幾何中點');
+        return;
+      }
+      pushHistory();
+      const A = findVertexById(nearSeg.v1Id);
+      const B = findVertexById(nearSeg.v2Id);
+      const Mx = Math.round((A.x + B.x) / 2);
+      const My = Math.round((A.y + B.y) / 2);
+      addVertex(Mx, My, 'M', { dx: 0, dy: 16 });
+      showToast('✅ 已在線段中點標出頂點 M！');
+      setTool('select');
+      render();
+      return;
+    }
   });
 
   window.addEventListener('mouseup', () => {
@@ -814,11 +1062,11 @@
       if (dragTarget && dragTarget.type === 'creating-circle') {
         const c = dragTarget.circle;
         if (c && c.radius < 25) {
-          c.radius = 120; // 若只是輕點一下，給予標準 120px 半徑
+          c.radius = 120; // 輕點時給予標準 120px
         }
         setTool('select');
-        updateSelectionPanel();
-        showToast('✅ 圓形繪製完成！可隨時拖曳圓周把手或在右側面板縮放');
+        updateSelectionState();
+        showToast('✅ 圓形繪製完成！可隨時拖曳圓周把手調整大小');
       }
       isDragging = false;
       dragTarget = null;
@@ -827,20 +1075,34 @@
     }
   });
 
-  // 雙擊畫布或物件快速完成多邊形
-  svg.addEventListener('dblclick', () => {
-    if (state.activeTool === 'polygon' && state.tempDrawing.polygonPoints.length >= 3) {
-      resetTempDrawing();
-      showToast('多邊形繪製結束');
+  // 雙擊事件：雙擊頂點改名、雙擊線段切換實線/虛線、雙擊角度改度數
+  svg.addEventListener('dblclick', (e) => {
+    const pos = getMouseSVGCoords(e);
+    const nearV = findVertexNear(pos.x, pos.y);
+    if (nearV) {
+      const newName = prompt(`請輸入頂點名稱 (目前為 ${nearV.label || '無'})：`, nearV.label || 'A');
+      if (newName !== null) {
+        pushHistory();
+        nearV.label = newName.trim();
+        render();
+      }
+      return;
+    }
+
+    const nearSeg = findSegmentNearPoint(pos.x, pos.y);
+    if (nearSeg) {
+      pushHistory();
+      nearSeg.style = nearSeg.style === 'solid' ? 'dashed' : 'solid';
+      showToast(nearSeg.style === 'dashed' ? '已切換為【輔助虛線】' : '已切換為【實線輪廓】');
       render();
+      return;
     }
   });
 
   // ==========================================
-  // 課本習作印刷風 SVG 核心渲染器
+  // 課本習作印刷風 SVG 核心渲染引擎
   // ==========================================
   function render() {
-    // 清空各圖層
     layerShadings.innerHTML = '';
     layerCircles.innerHTML = '';
     layerSegments.innerHTML = '';
@@ -858,7 +1120,7 @@
       layerShadings.appendChild(poly);
     });
 
-    // 2. 渲染圓形層 (Circles)
+    // 2. 渲染圓形層 (Circles) - 支援拖曳放大縮小
     state.circles.forEach(c => {
       const center = findVertexById(c.centerId);
       if (!center) return;
@@ -877,31 +1139,21 @@
       circleEl.addEventListener('click', (e) => {
         e.stopPropagation();
         state.selectedObject = { type: 'circle', id: c.id };
-        updateSelectionPanel();
+        updateSelectionState();
         render();
       });
 
       layerCircles.appendChild(circleEl);
 
-      // 當圓形被選取時，在圓周右側渲染顯眼的「縮放把手點 (Handle)」
-      if (isSelected) {
+      // 圓形縮放手柄 (Handle)
+      if (isSelected || state.activeTool === 'select') {
         const handleX = center.x + c.radius;
         const handleY = center.y;
 
-        // 縮放半徑引導線
-        const guideLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        guideLine.setAttribute('x1', center.x);
-        guideLine.setAttribute('y1', center.y);
-        guideLine.setAttribute('x2', handleX);
-        guideLine.setAttribute('y2', handleY);
-        guideLine.setAttribute('class', 'circle-resize-guide');
-        layerMarkers.appendChild(guideLine);
-
-        // 縮放把手圓點
         const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         handle.setAttribute('cx', handleX);
         handle.setAttribute('cy', handleY);
-        handle.setAttribute('r', 7);
+        handle.setAttribute('r', isSelected ? 7 : 5);
         handle.setAttribute('class', 'circle-resize-handle');
         handle.setAttribute('title', '按住拖曳可放大或縮小圓形');
         handle.addEventListener('mousedown', (e) => {
@@ -911,14 +1163,6 @@
           pushHistory();
         });
         layerMarkers.appendChild(handle);
-
-        // 提示文字標籤
-        const tip = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        tip.setAttribute('x', handleX + 12);
-        tip.setAttribute('y', handleY + 4);
-        tip.setAttribute('class', 'circle-handle-tip');
-        tip.textContent = `半徑 ${c.radius}px (拖曳放大縮小)`;
-        layerMarkers.appendChild(tip);
       }
     });
 
@@ -946,7 +1190,7 @@
       line.addEventListener('click', (e) => {
         e.stopPropagation();
         state.selectedObject = { type: 'segment', id: seg.id };
-        updateSelectionPanel();
+        updateSelectionState();
         render();
       });
 
@@ -957,19 +1201,13 @@
 
       layerSegments.appendChild(line);
 
-      // 渲染等長刻度標記 (單斜槓 / 雙斜槓)
-      if (seg.ticks && seg.ticks > 0) {
-        renderTickMarks(v1, v2, seg.ticks);
-      }
-
-      // 渲染邊長文字標籤
+      // 邊長數值文字
       if (seg.label && seg.label.trim()) {
         const midX = (v1.x + v2.x) / 2;
         const midY = (v1.y + v2.y) / 2;
         const dx = v2.x - v1.x;
         const dy = v2.y - v1.y;
         const len = Math.hypot(dx, dy) || 1;
-        // 計算向外的法向量位移
         const normX = -dy / len;
         const normY = dx / len;
         const labelOffsetDist = 14;
@@ -1000,11 +1238,10 @@
 
     // 5. 渲染頂點與字母標籤層 (Vertices)
     state.vertices.forEach(v => {
-      // 頂點圓點 (在課本印刷中是精緻的小圓點或交點)
       const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circle.setAttribute('cx', v.x);
       circle.setAttribute('cy', v.y);
-      circle.setAttribute('r', 3.5);
+      circle.setAttribute('r', 3.8);
       circle.setAttribute('class', 'geo-vertex-dot');
       if (state.selectedObject && state.selectedObject.id === v.id) {
         circle.classList.add('selected');
@@ -1023,7 +1260,7 @@
         text.addEventListener('click', (e) => {
           e.stopPropagation();
           state.selectedObject = { type: 'vertex', id: v.id };
-          updateSelectionPanel();
+          updateSelectionState();
           render();
         });
 
@@ -1038,7 +1275,7 @@
     const d2 = Math.hypot(v2.x - v.x, v2.y - v.y) || 1;
     const u1 = { x: (v1.x - v.x) / d1, y: (v1.y - v.y) / d1 };
     const u2 = { x: (v2.x - v.x) / d2, y: (v2.y - v.y) / d2 };
-    const size = 13; // 課本標準直角標記大小
+    const size = 13;
 
     const p1 = { x: v.x + u1.x * size, y: v.y + u1.y * size };
     const pCorner = { x: v.x + (u1.x + u2.x) * size, y: v.y + (u1.y + u2.y) * size };
@@ -1051,13 +1288,13 @@
     path.addEventListener('click', (e) => {
       e.stopPropagation();
       state.selectedObject = { type: 'marker', id: mk.id };
-      updateSelectionPanel();
+      updateSelectionState();
       render();
     });
     layerMarkers.appendChild(path);
   }
 
-  // 繪製課本角度圓弧與角度標籤
+  // 繪製課本角度圓弧與角度文字
   function renderAngleArcMarker(v, v1, v2, mk) {
     const angle1 = Math.atan2(v1.y - v.y, v1.x - v.x);
     const angle2 = Math.atan2(v2.y - v.y, v2.x - v.x);
@@ -1082,12 +1319,11 @@
     path.addEventListener('click', (e) => {
       e.stopPropagation();
       state.selectedObject = { type: 'marker', id: mk.id };
-      updateSelectionPanel();
+      updateSelectionState();
       render();
     });
     layerMarkers.appendChild(path);
 
-    // 角度數值文字
     if (mk.label && mk.label.trim()) {
       const midAngle = startAngle + diff / 2;
       const textR = r + 14;
@@ -1104,223 +1340,18 @@
     }
   }
 
-  // 繪製等長斜槓標記 (Ticks)
-  function renderTickMarks(v1, v2, count) {
-    const midX = (v1.x + v2.x) / 2;
-    const midY = (v1.y + v2.y) / 2;
-    const dx = v2.x - v1.x;
-    const dy = v2.y - v1.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const uX = dx / len;
-    const uY = dy / len;
-    const pX = -uY;
-    const pY = uX;
-    const tickLen = 6;
-    const spacing = 3.5;
-
-    for (let i = 0; i < count; i++) {
-      const offset = (i - (count - 1) / 2) * spacing;
-      const baseX = midX + uX * offset;
-      const baseY = midY + uY * offset;
-
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', baseX - pX * tickLen);
-      line.setAttribute('y1', baseY - pY * tickLen);
-      line.setAttribute('x2', baseX + pX * tickLen);
-      line.setAttribute('y2', baseY + pY * tickLen);
-      line.setAttribute('class', 'geo-tick-mark');
-      layerMarkers.appendChild(line);
-    }
-  }
-
   // ==========================================
-  // 右側屬性面板聯動
+  // 選取狀態與刪除管理
   // ==========================================
-  function updateSelectionPanel() {
-    if (!state.selectedObject) {
-      selectionEmptyHint.style.display = 'block';
-      selectionControls.style.display = 'none';
-      if (btnDeleteTop) btnDeleteTop.disabled = true;
-      return;
-    }
-
-    // 啟動頂部與側邊欄的顯眼刪除按鈕
-    if (btnDeleteTop) btnDeleteTop.disabled = false;
-    selectionEmptyHint.style.display = 'none';
-    selectionControls.style.display = 'block';
-    vertexPropGroup.style.display = 'none';
-    segmentPropGroup.style.display = 'none';
-    anglePropGroup.style.display = 'none';
-    if (circlePropGroup) circlePropGroup.style.display = 'none';
-
-    if (state.selectedObject.type === 'vertex') {
-      const v = findVertexById(state.selectedObject.id);
-      if (!v) return;
-      vertexPropGroup.style.display = 'block';
-      propVertexLabel.value = v.label;
-    } else if (state.selectedObject.type === 'segment') {
-      const s = state.segments.find(seg => seg.id === state.selectedObject.id);
-      if (!s) return;
-      segmentPropGroup.style.display = 'block';
-      propSegStyle.value = s.style;
-      propSegLabel.value = s.label || '';
-      propSegTicks.value = s.ticks || 0;
-    } else if (state.selectedObject.type === 'marker') {
-      const m = state.markers.find(mk => mk.id === state.selectedObject.id);
-      if (!m) return;
-      anglePropGroup.style.display = 'block';
-      propAngleLabel.value = m.label || '';
-      propAngleType.value = m.type;
-    } else if (state.selectedObject.type === 'circle') {
-      const c = state.circles.find(cir => cir.id === state.selectedObject.id);
-      if (!c) return;
-      if (circlePropGroup) {
-        circlePropGroup.style.display = 'block';
-        if (propCircleRadiusSlider) propCircleRadiusSlider.value = c.radius;
-        if (propCircleRadiusNum) propCircleRadiusNum.value = c.radius;
-        if (circleRadiusVal) circleRadiusVal.textContent = c.radius;
-        if (propCircleStyle) propCircleStyle.value = c.style || 'solid';
-      }
+  function updateSelectionState() {
+    if (btnDeleteTop) {
+      btnDeleteTop.disabled = !state.selectedObject;
     }
   }
 
-  // 頂點標籤修改
-  propVertexLabel.addEventListener('input', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'vertex') {
-      const v = findVertexById(state.selectedObject.id);
-      if (v) {
-        v.label = e.target.value;
-        render();
-      }
-    }
-  });
-
-  // 頂點方位微調按鈕
-  document.querySelectorAll('.dir-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!state.selectedObject || state.selectedObject.type !== 'vertex') return;
-      const v = findVertexById(state.selectedObject.id);
-      if (!v) return;
-      const dir = btn.getAttribute('data-dir');
-      const offsetMap = {
-        'top-left': { dx: -14, dy: -14 },
-        'top': { dx: 0, dy: -16 },
-        'top-right': { dx: 14, dy: -14 },
-        'left': { dx: -18, dy: 4 },
-        'center': { dx: 0, dy: 4 },
-        'right': { dx: 18, dy: 4 },
-        'bottom-left': { dx: -14, dy: 16 },
-        'bottom': { dx: 0, dy: 18 },
-        'bottom-right': { dx: 14, dy: 16 }
-      };
-      if (offsetMap[dir]) {
-        v.labelOffset = offsetMap[dir];
-        render();
-      }
-    });
-  });
-
-  // 線段屬性修改
-  propSegStyle.addEventListener('change', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'segment') {
-      const s = state.segments.find(seg => seg.id === state.selectedObject.id);
-      if (s) {
-        s.style = e.target.value;
-        render();
-      }
-    }
-  });
-
-  propSegLabel.addEventListener('input', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'segment') {
-      const s = state.segments.find(seg => seg.id === state.selectedObject.id);
-      if (s) {
-        s.label = e.target.value;
-        render();
-      }
-    }
-  });
-
-  propSegTicks.addEventListener('change', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'segment') {
-      const s = state.segments.find(seg => seg.id === state.selectedObject.id);
-      if (s) {
-        s.ticks = parseInt(e.target.value, 10);
-        render();
-      }
-    }
-  });
-
-  // 角度屬性修改
-  propAngleLabel.addEventListener('input', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'marker') {
-      const m = state.markers.find(mk => mk.id === state.selectedObject.id);
-      if (m) {
-        m.label = e.target.value;
-        render();
-      }
-    }
-  });
-
-  propAngleType.addEventListener('change', (e) => {
-    if (state.selectedObject && state.selectedObject.type === 'marker') {
-      const m = state.markers.find(mk => mk.id === state.selectedObject.id);
-      if (m) {
-        m.type = e.target.value;
-        render();
-      }
-    }
-  });
-
-  // 圓形屬性修改 (滑桿、精確數字、線條樣式)
-  if (propCircleRadiusSlider) {
-    propCircleRadiusSlider.addEventListener('input', (e) => {
-      if (state.selectedObject && state.selectedObject.type === 'circle') {
-        const c = state.circles.find(cir => cir.id === state.selectedObject.id);
-        if (c) {
-          const val = parseInt(e.target.value, 10);
-          c.radius = val;
-          if (propCircleRadiusNum) propCircleRadiusNum.value = val;
-          if (circleRadiusVal) circleRadiusVal.textContent = val;
-          render();
-        }
-      }
-    });
-  }
-
-  if (propCircleRadiusNum) {
-    propCircleRadiusNum.addEventListener('input', (e) => {
-      if (state.selectedObject && state.selectedObject.type === 'circle') {
-        const c = state.circles.find(cir => cir.id === state.selectedObject.id);
-        if (c) {
-          const val = Math.max(10, Math.min(400, parseInt(e.target.value, 10) || 120));
-          c.radius = val;
-          if (propCircleRadiusSlider) propCircleRadiusSlider.value = val;
-          if (circleRadiusVal) circleRadiusVal.textContent = val;
-          render();
-        }
-      }
-    });
-  }
-
-  if (propCircleStyle) {
-    propCircleStyle.addEventListener('change', (e) => {
-      if (state.selectedObject && state.selectedObject.type === 'circle') {
-        const c = state.circles.find(cir => cir.id === state.selectedObject.id);
-        if (c) {
-          c.style = e.target.value;
-          render();
-        }
-      }
-    });
-  }
-
-  // 頂部導航列按鈕事件連結
   if (btnUndoTop) btnUndoTop.addEventListener('click', undo);
   if (btnDeleteTop) btnDeleteTop.addEventListener('click', deleteSelectedObject);
 
-  // 刪除所選物件
-  btnDeleteSelected.addEventListener('click', deleteSelectedObject);
   function deleteSelectedObject() {
     if (!state.selectedObject) {
       showToast('請先點選畫布上要刪除的頂點、線段、圓形或標記');
@@ -1343,7 +1374,7 @@
     }
 
     state.selectedObject = null;
-    updateSelectionPanel();
+    updateSelectionState();
     render();
     showToast('🗑️ 已刪除所選物件');
   }
@@ -1351,16 +1382,13 @@
   // ==========================================
   // 匯出引擎 (PNG, SVG, DOCX, 剪貼簿)
   // ==========================================
-
-  // 將當前幾何圖渲染到離屏高解析 Canvas (3x 超採樣，相當於 300+ DPI 印刷畫質)
   async function generateHighResCanvas() {
-    const scale = 3;
+    const scale = 3; // 3x 超採樣 (300+ DPI 印刷畫質)
     const canvas = document.createElement('canvas');
     canvas.width = 800 * scale;
     canvas.height = 600 * scale;
     const ctx = canvas.getContext('2d');
 
-    // 底色
     const isWhiteBg = document.getElementById('chk-white-bg').checked;
     if (isWhiteBg) {
       ctx.fillStyle = '#ffffff';
@@ -1369,7 +1397,6 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 
-    // 複製 SVG 節點並過濾不需輸出的元素
     const cloneSvg = svg.cloneNode(true);
     const guides = cloneSvg.querySelector('#layer-guides');
     if (guides) guides.remove();
@@ -1391,21 +1418,21 @@
     });
   }
 
-  // 1. 複製高解析圖到剪貼簿 (老師可以直接在 Word 按 Ctrl+V)
+  // 1. 複製圖片到剪貼簿 (老師在 Word 按 Ctrl+V 直接貼上)
   btnCopyPng.addEventListener('click', async () => {
     try {
-      showToast('正在生成超高解析度圖檔...');
+      showToast('正在生成超高解析度幾何圖...');
       const canvas = await generateHighResCanvas();
       canvas.toBlob(async (blob) => {
         try {
           await navigator.clipboard.write([
             new ClipboardItem({ 'image/png': blob })
           ]);
-          showToast('✅ 已複製到剪貼簿！可直接切換至 Word 按 Ctrl+V 貼上！', 3500);
+          showToast('✅ 已複製到剪貼簿！切換到 Word 直接按 Ctrl+V 貼上！', 3500);
         } catch (err) {
           console.error(err);
-          showToast('⚠️ 瀏覽器剪貼簿權限限制，已改為直接觸發下載 PNG');
           downloadCanvas(canvas, 'MathGeoCraft_幾何圖.png');
+          showToast('已直接為您下載高解析 PNG 圖檔');
         }
       }, 'image/png');
     } catch (e) {
@@ -1452,130 +1479,59 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast('✅ SVG 向量檔已下載！（可直接拖入 Word 轉為形狀）');
+    showToast('✅ SVG 向量檔已下載！（可直接拖入 Word 轉為原生形狀）');
   });
 
-  // 4. 一鍵產生 Word 試卷檔 (.docx)
+  // 4. 一鍵產生 Word 幾何圖檔 (.docx) - 純淨幾何圖
   btnExportDocx.addEventListener('click', async () => {
     if (typeof docx === 'undefined') {
-      showToast('⚠️ Word 組件尚未載入完成，請稍候重試');
+      showToast('⚠️ Word 套件載入中，請稍候重試');
       return;
     }
 
     try {
-      showToast('📄 正在排版並打包 Word 試卷檔...');
+      showToast('📄 正在打包幾何圖 Word 檔...');
       const canvas = await generateHighResCanvas();
       
       canvas.toBlob(async (blob) => {
         const imageBuffer = await blob.arrayBuffer();
-        const testTitle = document.getElementById('docx-title').value.trim() || '幾何綜合練習試題';
-        const testPrompt = document.getElementById('docx-prompt').value.trim() || 
-          '【範例題】 如圖，△ABC 中，∠B = 90°，若 AB = 6，BC = 8，求斜邊 AC 之長度。';
-
-        const { Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle } = docx;
+        const { Document, Packer, Paragraph, TextRun, ImageRun, AlignmentType } = docx;
 
         const doc = new Document({
           sections: [{
             properties: {
               page: {
-                margin: { top: 1200, right: 1200, bottom: 1200, left: 1200 } // 寬度適配
+                margin: { top: 1000, right: 1000, bottom: 1000, left: 1000 }
               }
             },
             children: [
-              // 考卷大標題
               new Paragraph({
                 alignment: AlignmentType.CENTER,
+                spacing: { after: 200 },
                 children: [
                   new TextRun({
-                    text: testTitle,
+                    text: '【幾何復刻圖檔】',
                     bold: true,
-                    size: 32, // 16pt
+                    size: 26,
                     font: '標楷體'
+                  }),
+                  new TextRun({
+                    text: '（可直接點選圖案按 Ctrl+C 複製至您的段考試卷或教案中）',
+                    size: 18,
+                    color: '666666',
+                    font: '新細明體'
                   })
                 ]
               }),
               new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [
-                  new TextRun({
-                    text: '班級：_______  座號：_____  姓名：___________  得分：_______',
-                    size: 22,
-                    font: '標楷體'
-                  })
-                ]
-              }),
-              new Paragraph({ text: '' }), // 空行
-
-              // 試題內容與幾何圖的雙欄排版表格
-              new Table({
-                width: { size: 100, type: WidthType.PERCENTAGE },
-                borders: {
-                  top: { style: BorderStyle.NONE },
-                  bottom: { style: BorderStyle.NONE },
-                  left: { style: BorderStyle.NONE },
-                  right: { style: BorderStyle.NONE },
-                  insideHorizontal: { style: BorderStyle.NONE },
-                  insideVertical: { style: BorderStyle.NONE }
-                },
-                rows: [
-                  new TableRow({
-                    children: [
-                      // 左欄：題目文字說明
-                      new TableCell({
-                        width: { size: 55, type: WidthType.PERCENTAGE },
-                        children: [
-                          new Paragraph({
-                            children: [
-                              new TextRun({
-                                text: '一、 計算與證明題',
-                                bold: true,
-                                size: 24,
-                                font: '標楷體'
-                              })
-                            ]
-                          }),
-                          new Paragraph({
-                            spacing: { before: 120, after: 120 },
-                            children: [
-                              new TextRun({
-                                text: `1.  ${testPrompt}`,
-                                size: 22,
-                                font: '新細明體'
-                              })
-                            ]
-                          }),
-                          new Paragraph({
-                            spacing: { before: 400 },
-                            children: [
-                              new TextRun({
-                                text: '【解】：',
-                                bold: true,
-                                size: 20,
-                                font: '標楷體'
-                              })
-                            ]
-                          })
-                        ]
-                      }),
-                      // 右欄：嵌入課本風復刻幾何圖
-                      new TableCell({
-                        width: { size: 45, type: WidthType.PERCENTAGE },
-                        children: [
-                          new Paragraph({
-                            alignment: AlignmentType.CENTER,
-                            children: [
-                              new ImageRun({
-                                data: imageBuffer,
-                                transformation: {
-                                  width: 250,
-                                  height: 187.5
-                                }
-                              })
-                            ]
-                          })
-                        ]
-                      })
-                    ]
+                  new ImageRun({
+                    data: imageBuffer,
+                    transformation: {
+                      width: 480,
+                      height: 360
+                    }
                   })
                 ]
               })
@@ -1587,26 +1543,25 @@
         const url = URL.createObjectURL(docBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `MathGeo_${testTitle}.docx`;
+        a.download = 'MathGeoCraft_幾何圖.docx';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        showToast('🎉 Word 試卷檔 (.docx) 產生並下載成功！');
+        showToast('🎉 Word 幾何圖檔 (.docx) 下載完成！');
       }, 'image/png');
 
     } catch (e) {
       console.error(e);
-      showToast('產生 Word 失敗，請重試');
+      showToast('產生 Word 失敗');
     }
   });
 
   // ==========================================
-  // 快速鍵與說明視窗
+  // 快速鍵與全域監聽
   // ==========================================
   window.addEventListener('keydown', (e) => {
-    // 忽略在輸入框內的按鍵
     if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
 
     if (e.code === 'Space') {
@@ -1615,21 +1570,24 @@
     } else if (e.key === 'v' || e.key === 'V') {
       setTool('select');
       document.querySelector('[data-tool="select"]').click();
-    } else if (e.key === 'p' || e.key === 'P') {
-      setTool('polygon');
-      document.querySelector('[data-tool="polygon"]').click();
+    } else if (e.key === 's' || e.key === 'S') {
+      setTool('segment');
+      document.querySelector('[data-tool="segment"]').click();
     } else if (e.key === 'd' || e.key === 'D') {
       setTool('dashed-line');
       document.querySelector('[data-tool="dashed-line"]').click();
+    } else if (e.key === 'c' || e.key === 'C') {
+      setTool('circle');
+      document.querySelector('[data-tool="circle"]').click();
+    } else if (e.key === 'p' || e.key === 'P') {
+      setTool('polygon');
+      document.querySelector('[data-tool="polygon"]').click();
     } else if (e.key === 'r' || e.key === 'R') {
       setTool('right-angle');
       document.querySelector('[data-tool="right-angle"]').click();
     } else if (e.key === 'a' || e.key === 'A') {
       setTool('angle-arc');
       document.querySelector('[data-tool="angle-arc"]').click();
-    } else if (e.key === 'c' || e.key === 'C') {
-      setTool('circle');
-      document.querySelector('[data-tool="circle"]').click();
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       deleteSelectedObject();
     } else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
@@ -1640,7 +1598,7 @@
 
   btnUndo.addEventListener('click', undo);
   btnClearAll.addEventListener('click', () => {
-    if (confirm('確定要清空畫布上的所有幾何物件嗎？（底圖會保留）')) {
+    if (confirm('確定要清空畫布上的所有幾何圖形嗎？')) {
       pushHistory();
       state.vertices = [];
       state.segments = [];
@@ -1649,7 +1607,7 @@
       state.shadings = [];
       state.selectedObject = null;
       state.nextLabelIndex = 0;
-      updateSelectionPanel();
+      updateSelectionState();
       render();
       showToast('畫布已清空');
     }

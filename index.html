@@ -61,41 +61,72 @@
     <main class="workspace">
       <!-- 左側：工具列與樣板 -->
       <aside class="sidebar-left">
-        <!-- 工具選擇 -->
+        <!-- 基礎繪圖工具 -->
         <div class="panel-section">
-          <div class="section-title">繪圖工具</div>
+          <div class="section-title">幾何圖元工具</div>
           <div class="tool-grid">
-            <button class="tool-btn active" data-tool="select" title="選取與拖曳調整頂點/標籤 (V)">
+            <button class="tool-btn active" data-tool="select" title="選取、拖曳移動頂點與調整線段長短 (V)">
               <span class="tool-icon">👆</span>
-              <span class="tool-name">選取移動 (V)</span>
+              <span class="tool-name">選取調整 (V)</span>
             </button>
-            <button class="tool-btn" data-tool="polygon" title="點擊打點並連續繪製多邊形/實線邊界 (P)">
-              <span class="tool-icon">✏️</span>
-              <span class="tool-name">實線多邊形 (P)</span>
+            <button class="tool-btn" data-tool="segment" title="點擊兩點繪製實線線段 (S)">
+              <span class="tool-icon">／</span>
+              <span class="tool-name">實線線段 (S)</span>
             </button>
             <button class="tool-btn" data-tool="dashed-line" title="繪製課本輔助線 (虛線) (D)">
               <span class="tool-icon">╌</span>
               <span class="tool-name">輔助虛線 (D)</span>
             </button>
+            <button class="tool-btn" data-tool="circle" title="以圓心拖曳產生圓形 (C)">
+              <span class="tool-icon">⭕</span>
+              <span class="tool-name">圓形 (C)</span>
+            </button>
+            <button class="tool-btn" data-tool="polygon" title="連續點擊打點並封閉多邊形 (P)">
+              <span class="tool-icon">△</span>
+              <span class="tool-name">多邊形 (P)</span>
+            </button>
             <button class="tool-btn" data-tool="right-angle" title="點選頂點及兩邊加入課本標準直角折角 (R)">
               <span class="tool-icon">∟</span>
               <span class="tool-name">直角記號 (R)</span>
             </button>
-            <button class="tool-btn" data-tool="angle-arc" title="點選頂點及兩邊加入角度弧線與角度文字 (A)">
+            <button class="tool-btn" data-tool="angle-arc" title="點選三點加入角度圓弧與角度標記 (A)">
               <span class="tool-icon">⌒</span>
               <span class="tool-name">角度圓弧 (A)</span>
             </button>
-            <button class="tool-btn" data-tool="circle" title="以圓心拖曳產生圓形與圓心點 O (C)">
-              <span class="tool-icon">⭕</span>
-              <span class="tool-name">圓形繪製 (C)</span>
-            </button>
-            <button class="tool-btn" data-tool="tick-mark" title="為線段加上等長標記 (單斜槓 / 雙斜槓) (T)">
-              <span class="tool-icon">⫽</span>
-              <span class="tool-name">等長標記 (T)</span>
-            </button>
-            <button class="tool-btn" data-tool="shading" title="順時針點選頂點建立課本題目陰影區域 (S)">
+            <button class="tool-btn" data-tool="shading" title="順時針點選頂點包圍幾何陰影區域">
               <span class="tool-icon">▦</span>
-              <span class="tool-name">陰影鋪色 (S)</span>
+              <span class="tool-name">陰影鋪色</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- GeoGebra 尺規建構工具 -->
+        <div class="panel-section">
+          <div class="section-title">📐 GeoGebra 幾何建構</div>
+          <div class="tool-grid">
+            <button class="tool-btn" data-tool="perpendicular" title="【過點垂線】點選頂點與對邊線段，自動作高並標註直角">
+              <span class="tool-icon">⊥</span>
+              <span class="tool-name">過點垂線 (高)</span>
+            </button>
+            <button class="tool-btn" data-tool="bisector" title="【垂直平分線】點選線段，自動求中點並作中垂線">
+              <span class="tool-icon">⫾</span>
+              <span class="tool-name">中垂線 (平分)</span>
+            </button>
+            <button class="tool-btn" data-tool="angle-bisector" title="【角平分線】依序點選頂點與兩邊，作角平分線">
+              <span class="tool-icon">∠</span>
+              <span class="tool-name">角平分線</span>
+            </button>
+            <button class="tool-btn" data-tool="parallel" title="【平行線】點選頂點與參考線段，作過該點之平行線">
+              <span class="tool-icon">∥</span>
+              <span class="tool-name">平行線</span>
+            </button>
+            <button class="tool-btn" data-tool="tangent" title="【圓切線】點選圓外點與圓形，自動作圓之切線">
+              <span class="tool-icon">⊙</span>
+              <span class="tool-name">圓切線</span>
+            </button>
+            <button class="tool-btn" data-tool="midpoint" title="【幾何中點】點選線段，自動標出精確中點">
+              <span class="tool-icon">·</span>
+              <span class="tool-name">標出中點</span>
             </button>
           </div>
         </div>
@@ -233,128 +264,6 @@
           </div>
         </footer>
       </section>
-
-      <!-- 右側：選取物件屬性微調面板 -->
-      <aside class="sidebar-right">
-        <div class="panel-section">
-          <div class="section-title">課本排版風格即時微調</div>
-          
-          <div id="selection-empty-hint" class="empty-state">
-            點選畫布上的頂點、邊線或角度，可在此自訂名稱、邊長數字或線條樣式。
-          </div>
-
-          <div id="selection-controls" style="display:none;">
-            <!-- 頂點微調 -->
-            <div id="vertex-prop-group" class="prop-group" style="display:none;">
-              <div class="prop-header">頂點標記設定</div>
-              <div class="control-row">
-                <label for="prop-vertex-label">頂點名稱：</label>
-                <input type="text" id="prop-vertex-label" maxlength="5" class="input-text">
-              </div>
-              <div class="control-row">
-                <label>標籤方位：</label>
-                <div class="dir-buttons">
-                  <button class="dir-btn" data-dir="top-left">↖</button>
-                  <button class="dir-btn" data-dir="top">↑</button>
-                  <button class="dir-btn" data-dir="top-right">↗</button>
-                  <button class="dir-btn" data-dir="left">←</button>
-                  <button class="dir-btn" data-dir="center">·</button>
-                  <button class="dir-btn" data-dir="right">→</button>
-                  <button class="dir-btn" data-dir="bottom-left">↙</button>
-                  <button class="dir-btn" data-dir="bottom">↓</button>
-                  <button class="dir-btn" data-dir="bottom-right">↘</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 線段微調 -->
-            <div id="segment-prop-group" class="prop-group" style="display:none;">
-              <div class="prop-header">邊線與輔助線設定</div>
-              <div class="control-row">
-                <label for="prop-seg-style">線條形態：</label>
-                <select id="prop-seg-style" class="input-select">
-                  <option value="solid">實線（課本輪廓 1.8pt）</option>
-                  <option value="dashed">虛線（課本輔助線）</option>
-                  <option value="arrow">射線箭頭</option>
-                  <option value="double-arrow">雙向坐標軸</option>
-                </select>
-              </div>
-              <div class="control-row">
-                <label for="prop-seg-label">邊長標籤：</label>
-                <input type="text" id="prop-seg-label" placeholder="如 5, 2x, a" class="input-text">
-              </div>
-              <div class="control-row">
-                <label for="prop-seg-ticks">等長標記：</label>
-                <select id="prop-seg-ticks" class="input-select">
-                  <option value="0">無標記</option>
-                  <option value="1">單斜槓 (/)</option>
-                  <option value="2">雙斜槓 (//)</option>
-                  <option value="3">三斜槓 (///)</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- 角度微調 -->
-            <div id="angle-prop-group" class="prop-group" style="display:none;">
-              <div class="prop-header">角度標記設定</div>
-              <div class="control-row">
-                <label for="prop-angle-label">角度文字：</label>
-                <input type="text" id="prop-angle-label" placeholder="如 60°, θ, ∠1" class="input-text">
-              </div>
-              <div class="control-row">
-                <label for="prop-angle-type">標記樣式：</label>
-                <select id="prop-angle-type" class="input-select">
-                  <option value="arc">單圓弧</option>
-                  <option value="double-arc">雙圓弧</option>
-                  <option value="right-angle">直角折角 (∟)</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- 圓形微調 (可拖曳縮放與精確數值調整) -->
-            <div id="circle-prop-group" class="prop-group" style="display:none;">
-              <div class="prop-header">⭕ 圓形半徑與縮放設定</div>
-              <div class="control-row">
-                <label for="prop-circle-radius-slider">半徑大小：<b id="circle-radius-val" style="color: #38bdf8;">120</b> px</label>
-                <input type="range" id="prop-circle-radius-slider" min="15" max="350" value="120" style="width: 100%; cursor: pointer;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
-                  <span style="font-size: 11px; color: var(--text-muted);">精確數值：</span>
-                  <input type="number" id="prop-circle-radius-num" min="15" max="350" value="120" class="input-text" style="width: 80px;">
-                  <span style="font-size: 11px; color: var(--text-muted);">px</span>
-                </div>
-              </div>
-              <div class="control-row">
-                <label for="prop-circle-style">圓周線條：</label>
-                <select id="prop-circle-style" class="input-select">
-                  <option value="solid">實線（課本輪廓）</option>
-                  <option value="dashed">虛線（輔助圓）</option>
-                </select>
-              </div>
-              <p class="text-muted text-xs" style="margin-top: 6px; line-height: 1.4;">💡 提示：點擊圓形後，可直接在畫布上拖曳圓周上的<b>縮放控制手柄</b>放大或縮小！</p>
-            </div>
-
-            <div class="control-actions mt-3">
-              <button id="btn-delete-selected" class="btn btn-danger-prominent w-full">
-                <span class="icon">🗑️</span> <b>刪除此物件 (Delete)</b>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 試卷 Word 設定 -->
-        <div class="panel-section">
-          <div class="section-title">Word 試題快速匯出設定</div>
-          <div class="control-row">
-            <label for="docx-title">試題標題：</label>
-            <input type="text" id="docx-title" value="幾何綜合練習試題" class="input-text">
-          </div>
-          <div class="control-row">
-            <label for="docx-prompt">題目敘述：</label>
-            <textarea id="docx-prompt" rows="4" class="input-textarea" placeholder="如：如圖，△ABC 中，∠B = 90°，若 AB = 6，BC = 8，求 AC 之長度。"></textarea>
-          </div>
-          <p class="text-muted text-xs">產出的 Word 檔中將自動排版題目文字於左側，課本風幾何圖置於右側，並附有答案作答區塊。</p>
-        </div>
-      </aside>
     </main>
 
     <!-- 說明與快捷鍵彈窗 -->
