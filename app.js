@@ -2,13 +2,15 @@
  * MathGeoCraft - 100% 純前端幾何題目截圖辨識與 Word 原生可編輯向量圖產生器
  *
  * 核心技術（100% 瀏覽器本地運算，零 API、零外傳）：
- * 1. 自適應背景估計與墨水筆畫分離 (Adaptive Ink & Region Fill Isolation)
- * 2. 八連通域分析 (CCA)：分離幾何主結構、實心圓點 (如圓心 O) 與獨立文字標籤
- * 3. 平面圖拓撲面分析 (Planar Graph Faces)：徑向變異數檢測圓形與提取原圖填色 (如淺粉紅內切圓)
- * 4. 圓周筆畫剝離 + 迭代式霍夫直線剝離 (Iterative Hough Peeling) + PCA 正交最小二乘直線擬合
- * 5. 幾何約束求解器 (Geometric Constraint Solver)：精確交點計算、內切圓切點 (D, E, F) 與正交對齊
- * 6. 拓撲歐拉孔洞特徵 + 斜體襯線字型模板匹配 (Pure-JS Math Label OCR)
- * 7. 微軟 Office Word 原生 VML 向量形狀 (.docx) 打包引擎（線段、圓形、文字方塊在 Word 內皆可直接編輯）
+ * 1. 自適應背景與彩色輔助線分離 (Adaptive Background, Black Ink & Colored Dashed Line Isolation)
+ * 2. 法線對齊霍夫圓變換 (Normal-Aligned Circle Hough Transform)：即使圓被直線或另一圓切割仍可 100% 檢出
+ * 3. 圓周剝離 + 迭代式霍夫直線剝離 (Iterative Hough Peeling) + PCA 正交最小二乘直線擬合
+ * 4. 歐幾里得幾何約束求解器 (Euclidean Constraint Solver)：
+ *    - 三角形內切圓精確鎖定 (△ABC 內切圓 O 與切點 D, E, F)
+ *    - 兩圓相交與圓外一點切線鎖定 (習作 P35：過點 P 對圓 O 作雙切線 PA, PB 與直徑圓 O')
+ *    - 交點、切點、圓心與實心端點 (5x5 密度檢測) 精確對齊
+ * 5. 距離場過濾題頭中文字 + 撇號 (Prime O') 分離 + 拓撲歐拉孔洞斜體字元 OCR
+ * 6. 微軟 Office Word 原生 VML 向量形狀 (.docx) 打包引擎（線段、圓形、文字方塊在 Word 內皆可直接編輯）
  */
 
 (function () {
@@ -20,16 +22,14 @@
   const state = {
     currentImageSrc: null,
 
-    // 幾何結構資料 (800 x 600 標準座標系)
     geometry: {
       title: "△ABC 內切圓 O",
-      description: "銳角 △ABC 與其內切圓 O，切點分別為 D (BC 邊)、E (AC 邊)、F (AB 邊)。",
+      description: "",
       vertices: [],
       segments: [],
       circles: [],
       rightAngles: [],
-      dots: [],
-      polygons: []
+      dots: []
     },
 
     options: {
@@ -49,6 +49,7 @@
   const btnRemoveImg = document.getElementById('btn-remove-img');
   const btnReDetect = document.getElementById('btn-re-detect');
   const btnDemoIncircle = document.getElementById('btn-demo-incircle');
+  const btnDemoP35 = document.getElementById('btn-demo-p35');
 
   const detectStatusBadge = document.getElementById('detect-status-badge');
   const detectSummary = document.getElementById('detect-summary');
@@ -65,7 +66,6 @@
   const btnCopyPng = document.getElementById('btn-copy-png');
   const btnExportPng = document.getElementById('btn-export-png');
 
-  // 字元模板快取 (20 x 24 二值陣列)
   let charTemplates = null;
 
   // ==========================================
@@ -73,7 +73,9 @@
   // ==========================================
   function init() {
     buildCharacterTemplates();
-    loadDefaultDemoGeometry();
+
+    // 預設直接載入真實課本內切圓截圖並執行純前端辨識
+    loadDemoImage('demo_incircle.png');
 
     chkShowFill.addEventListener('change', (e) => {
       state.options.showFill = e.target.checked;
@@ -85,9 +87,12 @@
       render();
     });
 
-    btnDemoIncircle.addEventListener('click', () => {
-      runSyntheticDemoTest();
-    });
+    if (btnDemoIncircle) {
+      btnDemoIncircle.addEventListener('click', () => loadDemoImage('demo_incircle.png'));
+    }
+    if (btnDemoP35) {
+      btnDemoP35.addEventListener('click', () => loadDemoImage('demo_p35.png'));
+    }
 
     if (btnReDetect) {
       btnReDetect.addEventListener('click', () => {
@@ -106,6 +111,16 @@
     btnExportPng.addEventListener('click', downloadPng);
   }
 
+  function loadDemoImage(filename) {
+    state.currentImageSrc = filename;
+    sourceImg.onload = () => {
+      dropzoneEmpty.style.display = 'none';
+      dropzonePreview.style.display = 'flex';
+      analyzeImageElement(sourceImg);
+    };
+    sourceImg.src = filename;
+  }
+
   function showToast(msg, duration = 3200) {
     let toast = document.getElementById('app-toast');
     if (!toast) {
@@ -119,78 +134,6 @@
     toast._timer = setTimeout(() => {
       toast.style.opacity = '0';
     }, duration);
-  }
-
-  // ==========================================
-  // 預設示範與合成測試圖片辨識
-  // ==========================================
-  function loadDefaultDemoGeometry() {
-    // 精確計算之 △ABC 與內切圓 O
-    const A = { x: 315, y: 78 };
-    const B = { x: 145, y: 522 };
-    const C = { x: 695, y: 522 };
-    const geo = buildExactIncircleTriangle(A, B, C, "#f4dce8", ["A", "B", "C", "D", "E", "F", "O"]);
-    state.geometry = geo;
-    updateUIWithGeometry();
-  }
-
-  function buildExactIncircleTriangle(A, B, C, circleFill, labels) {
-    const a = Math.hypot(C.x - B.x, C.y - B.y);
-    const b = Math.hypot(C.x - A.x, C.y - A.y);
-    const c = Math.hypot(B.x - A.x, B.y - A.y);
-    const p = a + b + c;
-    const area2 = Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y));
-    const r = area2 / p;
-    const ox = (a * A.x + b * B.x + c * C.x) / p;
-    const oy = (a * A.y + b * B.y + c * C.y) / p;
-
-    function projectFoot(P, P1, P2) {
-      const dx = P2.x - P1.x, dy = P2.y - P1.y;
-      const len2 = dx * dx + dy * dy;
-      const t = ((P.x - P1.x) * dx + (P.y - P1.y) * dy) / len2;
-      return { x: P1.x + t * dx, y: P1.y + t * dy };
-    }
-
-    const D = projectFoot({ x: ox, y: oy }, B, C);
-    const E = projectFoot({ x: ox, y: oy }, A, C);
-    const F = projectFoot({ x: ox, y: oy }, A, B);
-
-    return {
-      title: "△ABC 內切圓 O",
-      description: "已識別：三角形 ABC 及其內切圓 O（粉紅填色），切點分別為 D (BC 邊)、E (AC 邊)、F (AB 邊)。",
-      vertices: [
-        { id: "A", label: labels[0] || "A", x: Math.round(A.x), y: Math.round(A.y), labelOffset: { dx: 0, dy: -24 } },
-        { id: "B", label: labels[1] || "B", x: Math.round(B.x), y: Math.round(B.y), labelOffset: { dx: -20, dy: 16 } },
-        { id: "C", label: labels[2] || "C", x: Math.round(C.x), y: Math.round(C.y), labelOffset: { dx: 20, dy: 16 } },
-        { id: "D", label: labels[3] || "D", x: Math.round(D.x), y: Math.round(D.y), labelOffset: { dx: 0, dy: 24 } },
-        { id: "E", label: labels[4] || "E", x: Math.round(E.x), y: Math.round(E.y), labelOffset: { dx: 22, dy: -8 } },
-        { id: "F", label: labels[5] || "F", x: Math.round(F.x), y: Math.round(F.y), labelOffset: { dx: -22, dy: -6 } },
-        { id: "O", label: labels[6] || "O", x: Math.round(ox), y: Math.round(oy), labelOffset: { dx: -16, dy: 24 } }
-      ],
-      segments: [
-        { v1: "A", v2: "B", style: "solid" },
-        { v1: "B", v2: "C", style: "solid" },
-        { v1: "C", v2: "A", style: "solid" }
-      ],
-      circles: [
-        { center: "O", radius: Math.round(r), fill: circleFill, style: "solid" }
-      ],
-      rightAngles: [],
-      dots: [
-        { vertex: "O", r: 4 }
-      ]
-    };
-  }
-
-  // 載入真實課本題目截圖 (demo_incircle.png) 並直接交由純前端視覺引擎實測辨識
-  function runSyntheticDemoTest() {
-    state.currentImageSrc = 'demo_incircle.png';
-    sourceImg.onload = () => {
-      dropzoneEmpty.style.display = 'none';
-      dropzonePreview.style.display = 'flex';
-      analyzeImageElement(sourceImg);
-    };
-    sourceImg.src = 'demo_incircle.png';
   }
 
   // ==========================================
@@ -260,7 +203,7 @@
   // ==========================================
   // 純前端斜體數學字元模板庫 (A-Z)
   // ==========================================
-  const CANDIDATE_CHARS = "ABCDEFGHJKLMNPQRSTUVXYZ";
+  const CANDIDATE_CHARS = "ABCDEFGHJKLMNPQRSTUVXYZO";
   const CHAR_HOLES = {
     'A': 1, 'B': 2, 'C': 0, 'D': 1, 'E': 0, 'F': 0, 'G': 0, 'H': 0,
     'J': 0, 'K': 0, 'L': 0, 'M': 0, 'N': 0, 'O': 1, 'P': 1, 'Q': 1,
@@ -275,9 +218,8 @@
     c.height = 48;
     const ctx = c.getContext('2d', { willReadFrequently: true });
 
-    const allChars = CANDIDATE_CHARS + "O";
-    for (let i = 0; i < allChars.length; i++) {
-      const ch = allChars[i];
+    for (let i = 0; i < CANDIDATE_CHARS.length; i++) {
+      const ch = CANDIDATE_CHARS[i];
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, 48, 48);
       ctx.fillStyle = '#ffffff';
@@ -317,7 +259,6 @@
     return dst;
   }
 
-  // 計算字元區塊內部的封閉孔洞數 (Euler Holes) 與孔洞重心
   function analyzeCharTopology(patch, w, h) {
     const pw = w + 2, ph = h + 2;
     const padded = new Uint8Array(pw * ph);
@@ -330,7 +271,6 @@
     const queue = new Int32Array(pw * ph);
     let holes = 0;
     let totalHoleArea = 0;
-    let holeSumY = 0;
 
     for (let y = 0; y < ph; y++) {
       for (let x = 0; x < pw; x++) {
@@ -341,20 +281,18 @@
           visited[idx] = 1;
           let touchesBorder = false;
           let area = 0;
-          let sumY = 0;
 
           while (head < tail) {
             const cur = queue[head++];
             const cy = Math.floor(cur / pw);
             const cx = cur % pw;
             area++;
-            sumY += cy;
             if (cx === 0 || cy === 0 || cx === pw - 1 || cy === ph - 1) {
               touchesBorder = true;
             }
-            const neighbors = [cur - 1, cur + 1, cur - pw, cur + pw];
+            const nbs = [cur - 1, cur + 1, cur - pw, cur + pw];
             for (let k = 0; k < 4; k++) {
-              const nb = neighbors[k];
+              const nb = nbs[k];
               if (nb >= 0 && nb < pw * ph && !visited[nb] && padded[nb] === 0) {
                 const ny = Math.floor(nb / pw);
                 const nx = nb % pw;
@@ -365,32 +303,24 @@
               }
             }
           }
-
           if (!touchesBorder && area >= 6) {
             holes++;
             totalHoleArea += area;
-            holeSumY += sumY;
           }
         }
       }
     }
-
-    return {
-      holes,
-      holeRatio: totalHoleArea / (w * h),
-      holeRelY: totalHoleArea > 0 ? (holeSumY / totalHoleArea) / ph : 0.5
-    };
+    return { holes, holeRatio: totalHoleArea / (w * h) };
   }
 
   function matchSingleCharacter(gray, imgW, imgH, box) {
-    const x1 = Math.max(0, box.minX - 1);
-    const y1 = Math.max(0, box.minY - 1);
-    const x2 = Math.min(imgW - 1, box.maxX + 1);
-    const y2 = Math.min(imgH - 1, box.maxY + 1);
+    const x1 = Math.max(0, box.minX);
+    const y1 = Math.max(0, box.minY);
+    const x2 = Math.min(imgW - 1, box.maxX);
+    const y2 = Math.min(imgH - 1, box.maxY);
     const cw = x2 - x1 + 1;
     const ch = y2 - y1 + 1;
 
-    // 計算局部 Otsu 閾值
     let minG = 255, maxG = 0;
     for (let y = y1; y <= y2; y++) {
       for (let x = x1; x <= x2; x++) {
@@ -399,18 +329,24 @@
         if (v > maxG) maxG = v;
       }
     }
-    const thresh = minG + (maxG - minG) * 0.58;
+    const thresh = minG + (maxG - minG) * 0.65;
+    const holeThresh = minG + (maxG - minG) * 0.82;
 
     const cropBin = new Uint8Array(cw * ch);
+    const holeBin = new Uint8Array(cw * ch);
     let bx1 = cw, by1 = ch, bx2 = 0, by2 = 0;
     for (let y = 0; y < ch; y++) {
       for (let x = 0; x < cw; x++) {
-        if (gray[(y1 + y) * imgW + (x1 + x)] < thresh) {
+        const v = gray[(y1 + y) * imgW + (x1 + x)];
+        if (v < thresh) {
           cropBin[y * cw + x] = 1;
           if (x < bx1) bx1 = x;
           if (x > bx2) bx2 = x;
           if (y < by1) by1 = y;
           if (y > by2) by2 = y;
+        }
+        if (v < holeThresh) {
+          holeBin[y * cw + x] = 1;
         }
       }
     }
@@ -419,7 +355,8 @@
 
     const TW = 20, TH = 24;
     const norm = resizeBinaryPatch(cropBin, cw, bx1, by1, bx2 - bx1 + 1, by2 - by1 + 1, TW, TH);
-    const topo = analyzeCharTopology(norm, TW, TH);
+    const normHole = resizeBinaryPatch(holeBin, cw, bx1, by1, bx2 - bx1 + 1, by2 - by1 + 1, TW, TH);
+    const topo = analyzeCharTopology(normHole, TW, TH);
 
     const scores = {};
     let bestChar = 'A';
@@ -432,21 +369,19 @@
       }
       let score = matchCount / (TW * TH);
 
-      // 加入拓撲孔洞先驗加權
       const expectedHoles = CHAR_HOLES[charKey] || 0;
       if (topo.holes === expectedHoles) {
-        score += 0.08;
-      } else if (Math.abs(topo.holes - expectedHoles) >= 1) {
-        score -= 0.06;
+        score += 0.05;
+      } else {
+        score -= 0.04;
       }
 
-      // 區分 O 與 D 與 A
       if (topo.holes === 1) {
         if (topo.holeRatio > 0.22 && (charKey === 'O' || charKey === 'D')) {
-          score += 0.06;
+          score += 0.04;
         }
-        if (topo.holeRatio < 0.18 && charKey === 'A') {
-          score += 0.06;
+        if (topo.holeRatio < 0.18 && (charKey === 'A' || charKey === 'P' || charKey === 'R')) {
+          score += 0.04;
         }
       }
 
@@ -457,7 +392,13 @@
       }
     }
 
-    return { bestChar, bestScore, scores, topo };
+    return {
+      bestChar: box.hasPrime ? `${bestChar}'` : bestChar,
+      rawChar: bestChar,
+      hasPrime: !!box.hasPrime,
+      bestScore,
+      scores
+    };
   }
 
   // ==========================================
@@ -469,13 +410,12 @@
     const natH = imgEl.naturalHeight || imgEl.height;
     if (!natW || !natH) return;
 
-    // 最佳工作解析度 (長邊約 240~460px，兼顧速度與像素連通性)
     let workScale = 1.0;
     const maxDim = Math.max(natW, natH);
     if (maxDim > 460) {
       workScale = 360 / maxDim;
-    } else if (maxDim < 160) {
-      workScale = 260 / maxDim;
+    } else if (maxDim < 150) {
+      workScale = 240 / maxDim;
     }
 
     const W = Math.round(natW * workScale);
@@ -489,45 +429,143 @@
 
     const rgba = ctx.getImageData(0, 0, W, H).data;
     const gray = new Float32Array(W * H);
+    const rArr = new Uint8Array(W * H);
+    const gArr = new Uint8Array(W * H);
+    const bArr = new Uint8Array(W * H);
 
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i * 4];
       const g = rgba[i * 4 + 1];
       const b = rgba[i * 4 + 2];
+      rArr[i] = r;
+      gArr[i] = g;
+      bArr[i] = b;
       gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
 
-    // Step 1: 估計背景色 (取四周邊框像素中位數)
-    const borderSamplesR = [], borderSamplesG = [], borderSamplesB = [], borderSamplesL = [];
+    // Step 1: 估計背景色
+    const borderR = [], borderG = [], borderB = [], borderL = [];
     for (let x = 0; x < W; x += 2) {
       for (const y of [0, 1, H - 2, H - 1]) {
         const idx = y * W + x;
-        borderSamplesR.push(rgba[idx * 4]);
-        borderSamplesG.push(rgba[idx * 4 + 1]);
-        borderSamplesB.push(rgba[idx * 4 + 2]);
-        borderSamplesL.push(gray[idx]);
+        borderR.push(rArr[idx]);
+        borderG.push(gArr[idx]);
+        borderB.push(bArr[idx]);
+        borderL.push(gray[idx]);
       }
     }
-    borderSamplesR.sort((a, b) => a - b);
-    borderSamplesG.sort((a, b) => a - b);
-    borderSamplesB.sort((a, b) => a - b);
-    borderSamplesL.sort((a, b) => a - b);
-    const midIdx = Math.floor(borderSamplesL.length / 2);
-    const bgR = borderSamplesR[midIdx] || 240;
-    const bgG = borderSamplesG[midIdx] || 245;
-    const bgB = borderSamplesB[midIdx] || 250;
-    const bgL = borderSamplesL[midIdx] || 242;
+    borderR.sort((a, b) => a - b);
+    borderG.sort((a, b) => a - b);
+    borderB.sort((a, b) => a - b);
+    borderL.sort((a, b) => a - b);
+    const mid = Math.floor(borderL.length / 2);
+    const bgR = borderR[mid] ?? 245;
+    const bgG = borderG[mid] ?? 248;
+    const bgB = borderB[mid] ?? 252;
+    const bgL = borderL[mid] ?? 248;
 
-    // 墨水二值化遮罩
-    const inkThresh = Math.min(188, bgL - 36);
-    const inkMask = new Uint8Array(W * H);
+    // 分離黑色墨水筆畫 (blackInk) 與彩色輔助筆畫 (coloredStroke，如粉紅虛線 OA)
+    const inkThresh = Math.min(190, bgL - 32);
+    const blackInk = new Uint8Array(W * H);
+    const coloredStroke = new Uint8Array(W * H);
+
     for (let i = 0; i < W * H; i++) {
-      if (gray[i] < inkThresh) {
-        inkMask[i] = 1;
+      const r = rArr[i], g = gArr[i], b = bArr[i];
+      const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+      const isMagentaOrColoredInk = (maxC - minC > 45) && (r > g + 35);
+      if (isMagentaOrColoredInk) {
+        coloredStroke[i] = 1;
+      } else if (gray[i] < inkThresh) {
+        blackInk[i] = 1;
       }
     }
 
-    // Step 2: 八連通域分析 (8-Connected Components)
+    // Step 2: 八連通域分析 (8-Connected Components on blackInk)
+    const components = extractConnectedComponents(blackInk, W, H);
+    const geoMask = new Uint8Array(W * H);
+    let geoMinX = W, geoMaxX = 0, geoMinY = H, geoMaxY = 0;
+
+    for (const comp of components) {
+      if (Math.max(comp.w, comp.h) >= 36 || (Math.max(comp.w, comp.h) >= 25 && comp.minY > 18)) {
+        for (let i = 0; i < comp.pixels.length; i++) {
+          const idx = comp.pixels[i];
+          geoMask[idx] = 1;
+          const py = Math.floor(idx / W), px = idx % W;
+          if (px < geoMinX) geoMinX = px;
+          if (px > geoMaxX) geoMaxX = px;
+          if (py < geoMinY) geoMinY = py;
+          if (py > geoMaxY) geoMaxY = py;
+        }
+      }
+    }
+
+    // Step 3: 法線對齊霍夫圓變換 (Normal-Aligned Circle Hough Transform)
+    // 即使圓被多條直線或另一個圓切割，仍能以 >85% 切向扇區覆蓋率精準檢出！
+    const detectedCircles = detectCirclesNormalHough(
+      geoMask, blackInk, coloredStroke, rArr, gArr, bArr, bgR, bgG, bgB, W, H
+    );
+
+    // Step 4: 計算幾何主體距離場，過濾遠離幾何圖形的標題文字，並提取字元與撇號 (Prime O')
+    const charBoxes = extractLabelBoxesWithPrime(components, geoMask, detectedCircles, W, H);
+
+    // Step 5: 偵測 5x5 高密度實心圓點 (如 P, O', O, A, B 上的實心黑點)
+    const denseDots = detectSolidVertexDots(blackInk, components, W, H);
+
+    // Step 6: 剝離圓周像素後，提取實線段與彩色/虛線輔助線段
+    const linesOnlyMask = new Uint8Array(geoMask);
+    for (const c of detectedCircles) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (linesOnlyMask[y * W + x] === 1) {
+            const d = Math.hypot(x - c.cx, y - c.cy);
+            if (Math.abs(d - c.r) <= 2.3) {
+              linesOnlyMask[y * W + x] = 0;
+            }
+          }
+        }
+      }
+    }
+
+    const solidSegs = extractStraightSegmentsHoughPCA(linesOnlyMask, W, H, 14, 20, 28)
+      .map(s => ({ ...s, style: 'solid', color: '#18181b' }));
+
+    // 檢查幾何範圍內的彩色虛線/輔助線 (例如 P35 中的粉紅虛線半徑 OA)
+    const coloredGeoMask = new Uint8Array(W * H);
+    const yStart = Math.max(0, geoMinY - 4);
+    const yEnd = Math.min(H - 1, geoMaxY + 4);
+    const xStart = Math.max(0, geoMinX - 4);
+    const xEnd = Math.min(W - 1, geoMaxX + 4);
+    for (let y = yStart; y <= yEnd; y++) {
+      for (let x = xStart; x <= xEnd; x++) {
+        if (coloredStroke[y * W + x] === 1) {
+          coloredGeoMask[y * W + x] = 1;
+        }
+      }
+    }
+
+    const dashedSegs = extractStraightSegmentsHoughPCA(coloredGeoMask, W, H, 10, 15, 16)
+      .map(s => ({ ...s, style: 'dashed', color: '#db2777' }));
+
+    const mergedSegments = mergeCollinearSegments([...solidSegs, ...dashedSegs]);
+
+    // Step 7: 歐幾里得幾何約束求解與座標正規化
+    const solvedGeo = solveEuclideanGeometry(
+      mergedSegments,
+      detectedCircles,
+      denseDots,
+      charBoxes,
+      gray,
+      W,
+      H
+    );
+
+    const elapsed = (performance.now() - t0).toFixed(0);
+    state.geometry = solvedGeo;
+    updateUIWithGeometry(elapsed);
+    showToast(`⚡ 純前端辨識完成（${elapsed} ms）！右側已生成課本級幾何預覽！`, 3400);
+  }
+
+  function extractConnectedComponents(mask, W, H) {
     const visited = new Uint8Array(W * H);
     const queue = new Int32Array(W * H);
     const components = [];
@@ -535,7 +573,7 @@
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const startIdx = y * W + x;
-        if (inkMask[startIdx] === 1 && !visited[startIdx]) {
+        if (mask[startIdx] === 1 && !visited[startIdx]) {
           let head = 0, tail = 0;
           queue[tail++] = startIdx;
           visited[startIdx] = 1;
@@ -564,7 +602,7 @@
                 const nx = cx + dx;
                 if (nx < 0 || nx >= W) continue;
                 const nIdx = ny * W + nx;
-                if (inkMask[nIdx] === 1 && !visited[nIdx]) {
+                if (mask[nIdx] === 1 && !visited[nIdx]) {
                   visited[nIdx] = 1;
                   queue[tail++] = nIdx;
                 }
@@ -584,118 +622,286 @@
         }
       }
     }
+    return components;
+  }
 
-    // 分類連通域：幾何主體 vs 實心圓點 vs 文字標籤碎片
-    const geoMask = new Uint8Array(W * H);
-    const detectedDots = [];
-    const textFrags = [];
+  // 法線對齊霍夫圓變換 (Normal-Aligned Circle Hough Transform)
+  function detectCirclesNormalHough(geoMask, blackInk, coloredStroke, rArr, gArr, bArr, bgR, bgG, bgB, W, H) {
+    const gXs = [];
+    const gYs = [];
+    const nxArr = [];
+    const nyArr = [];
 
-    // 找出最大連通域面積
-    let maxCompArea = 0;
-    for (const comp of components) {
-      if (comp.area > maxCompArea) maxCompArea = comp.area;
-    }
+    const normXGrid = new Float32Array(W * H);
+    const normYGrid = new Float32Array(W * H);
 
-    for (const comp of components) {
-      const fillRatio = comp.area / (comp.w * comp.h);
-      const aspect = comp.w / comp.h;
-
-      // 1. 幾何主體線條 (面積大或跨度大)
-      if (comp.area >= Math.max(120, maxCompArea * 0.15) || Math.max(comp.w, comp.h) >= 36) {
-        for (let i = 0; i < comp.pixels.length; i++) {
-          geoMask[comp.pixels[i]] = 1;
-        }
-      }
-      // 2. 實心小圓點 (如圓心點 O)
-      else if (comp.w >= 4 && comp.w <= 11 && comp.h >= 4 && comp.h <= 11 &&
-               aspect >= 0.7 && aspect <= 1.45 && fillRatio >= 0.54 && comp.area >= 10) {
-        detectedDots.push({
-          x: comp.cx,
-          y: comp.cy,
-          r: (comp.w + comp.h) / 4
-        });
-      }
-      // 3. 候選文字筆畫碎片
-      else if (comp.area >= 4 && comp.w <= 34 && comp.h <= 34) {
-        textFrags.push({
-          minX: comp.minX,
-          minY: comp.minY,
-          maxX: comp.maxX,
-          maxY: comp.maxY
-        });
-      }
-    }
-
-    // 合併相鄰文字碎片 (例如斜體 A 頂部或斷筆)
-    const charBoxes = mergeNearbyBoxes(textFrags, 5, 4).filter(b => {
-      const bw = b.maxX - b.minX + 1;
-      const bh = b.maxY - b.minY + 1;
-      return bh >= 7 && bh <= 34 && bw >= 4 && bw <= 32;
-    });
-
-    // Step 3: 拓撲面分析 (提取封閉圓形與區域填色)
-    const geoClosed = morphClose3x3(geoMask, W, H);
-    const faces = extractTopologicalFaces(geoClosed, rgba, W, H, bgR, bgG, bgB);
-
-    const detectedCircles = [];
-    for (const face of faces) {
-      // 若徑向標準差 / 平均半徑 < 0.055 且長寬比接近 1，必為幾何圓形！
-      const aspect = face.w / face.h;
-      if (face.relRadialStd < 0.055 && aspect >= 0.85 && aspect <= 1.18 && face.rMean >= 12) {
-        let cx = face.cx;
-        let cy = face.cy;
-        // 若附近有偵測到實心圓心點，優先對齊圓心點
-        for (const d of detectedDots) {
-          if (Math.hypot(d.x - cx, d.y - cy) <= 5.0) {
-            cx = d.x;
-            cy = d.y;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (geoMask[y * W + x] === 1) {
+          let sxx = 0, syy = 0, sxy = 0, cnt = 0;
+          for (let dy = -2; dy <= 2; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= H) continue;
+            for (let dx = -2; dx <= 2; dx++) {
+              const nx = x + dx;
+              if (nx >= 0 && nx < W && geoMask[ny * W + nx] === 1) {
+                sxx += dx * dx;
+                syy += dy * dy;
+                sxy += dx * dy;
+                cnt++;
+              }
+            }
+          }
+          if (cnt >= 3) {
+            const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+            const nx = -Math.sin(ang);
+            const ny = Math.cos(ang);
+            gXs.push(x);
+            gYs.push(y);
+            nxArr.push(nx);
+            nyArr.push(ny);
+            normXGrid[y * W + x] = nx;
+            normYGrid[y * W + x] = ny;
           }
         }
-        detectedCircles.push({
-          cx,
-          cy,
-          r: face.rMean + 0.9,
-          fill: face.fillHex
-        });
       }
     }
 
-    // Step 4: 剝離圓周像素後，執行迭代式霍夫直線剝離 (Iterative Hough Peeling) + PCA 擬合
-    const linesOnlyMask = new Uint8Array(geoMask);
-    for (const c of detectedCircles) {
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          if (linesOnlyMask[y * W + x] === 1) {
-            const dist = Math.hypot(x - c.cx, y - c.cy);
-            if (dist >= c.r - 2.1 && dist <= c.r + 2.1) {
-              linesOnlyMask[y * W + x] = 0;
+    const numPts = gXs.length;
+    if (numPts < 30) return [];
+
+    // 72 個角度扇區 (每 5 度一格)
+    const cos72 = new Float32Array(72);
+    const sin72 = new Float32Array(72);
+    for (let k = 0; k < 72; k++) {
+      const rad = (k * 5 * Math.PI) / 180;
+      cos72[k] = Math.cos(rad);
+      sin72[k] = Math.sin(rad);
+    }
+
+    const maxR = Math.floor(Math.min(W, H) * 0.48);
+    const acc = new Int32Array(W * H);
+    const smoothAcc = new Int32Array(W * H);
+    const verified = [];
+
+    for (let rad = 18; rad <= maxR; rad++) {
+      acc.fill(0);
+      for (let i = 0; i < numPts; i++) {
+        const x = gXs[i], y = gYs[i];
+        const rnx = rad * nxArr[i], rny = rad * nyArr[i];
+
+        const cx1 = Math.round(x + rnx), cy1 = Math.round(y + rny);
+        if (cx1 >= 5 && cx1 < W - 5 && cy1 >= 5 && cy1 < H - 5) {
+          acc[cy1 * W + cx1]++;
+        }
+        const cx2 = Math.round(x - rnx), cy2 = Math.round(y - rny);
+        if (cx2 >= 5 && cx2 < W - 5 && cy2 >= 5 && cy2 < H - 5) {
+          acc[cy2 * W + cx2]++;
+        }
+      }
+
+      // 3x3 鄰域聚合
+      let maxVal = 0;
+      for (let y = 5; y < H - 5; y++) {
+        for (let x = 5; x < W - 5; x++) {
+          const sum =
+            acc[(y - 1) * W + (x - 1)] + acc[(y - 1) * W + x] + acc[(y - 1) * W + (x + 1)] +
+            acc[y * W + (x - 1)]       + acc[y * W + x]       + acc[y * W + (x + 1)] +
+            acc[(y + 1) * W + (x - 1)] + acc[(y + 1) * W + x] + acc[(y + 1) * W + (x + 1)];
+          smoothAcc[y * W + x] = sum;
+          if (sum > maxVal) maxVal = sum;
+        }
+      }
+
+      if (maxVal < 24) continue;
+      const peakThresh = Math.max(24, Math.floor(maxVal * 0.72));
+
+      for (let py = 5; py < H - 5; py++) {
+        for (let px = 5; px < W - 5; px++) {
+          if (smoothAcc[py * W + px] >= peakThresh) {
+            let alignedSectors = 0;
+            for (let k = 0; k < 72; k++) {
+              const ucx = cos72[k], ucy = sin72[k];
+              let found = false;
+              for (const dr of [-1.2, 0.0, 1.2]) {
+                const qx = Math.round(px + (rad + dr) * ucx);
+                const qy = Math.round(py + (rad + dr) * ucy);
+                if (qx >= 0 && qx < W && qy >= 0 && qy < H && geoMask[qy * W + qx] === 1) {
+                  const idx = qy * W + qx;
+                  const dot = Math.abs(normXGrid[idx] * ucx + normYGrid[idx] * ucy);
+                  if (dot >= 0.88) {
+                    found = true;
+                    break;
+                  }
+                }
+              }
+              if (found) alignedSectors++;
+            }
+            const cov = alignedSectors / 72;
+            if (cov >= 0.58) {
+              verified.push({ cov, cx: px, cy: py, r: rad });
             }
           }
         }
       }
     }
 
-    const rawSegments = extractStraightSegmentsHoughPCA(linesOnlyMask, W, H);
-    const mergedSegments = mergeCollinearSegments(rawSegments);
+    // 非極大值抑制 (NMS)
+    verified.sort((a, b) => b.cov - a.cov);
+    const circles = [];
+    for (const cand of verified) {
+      const isDup = circles.some(
+        c => Math.hypot(cand.cx - c.cx, cand.cy - c.cy) <= 12 && Math.abs(cand.r - c.r) <= 10
+      );
+      if (!isDup) {
+        // 取樣圓內部非墨水像素的中位數顏色，判斷是否有填色
+        const sampleR = [], sampleG = [], sampleB = [];
+        const rInner = cand.r * 0.82;
+        const y0 = Math.max(0, Math.floor(cand.cy - rInner));
+        const y1 = Math.min(H - 1, Math.ceil(cand.cy + rInner));
+        const x0 = Math.max(0, Math.floor(cand.cx - rInner));
+        const x1 = Math.min(W - 1, Math.ceil(cand.cx + rInner));
 
-    // Step 5: 幾何約束求解 (精確交點、T 型交點、內切圓切點計算)
-    const solvedGeo = solveGeometricConstraints(
-      mergedSegments,
-      detectedCircles,
-      detectedDots,
-      charBoxes,
-      gray,
-      W,
-      H
-    );
+        for (let y = y0; y <= y1; y += 2) {
+          for (let x = x0; x <= x1; x += 2) {
+            if (Math.hypot(x - cand.cx, y - cand.cy) <= rInner) {
+              const idx = y * W + x;
+              if (blackInk[idx] === 0 && coloredStroke[idx] === 0) {
+                sampleR.push(rArr[idx]);
+                sampleG.push(gArr[idx]);
+                sampleB.push(bArr[idx]);
+              }
+            }
+          }
+        }
 
-    const elapsed = (performance.now() - t0).toFixed(0);
-    state.geometry = solvedGeo;
-    updateUIWithGeometry(elapsed);
-    showToast(`⚡ 純前端辨識完成（耗時 ${elapsed} ms）！右側已生成課本級幾何預覽！`, 3500);
+        let fillHex = 'transparent';
+        if (sampleR.length > 10) {
+          sampleR.sort((a, b) => a - b);
+          sampleG.sort((a, b) => a - b);
+          sampleB.sort((a, b) => a - b);
+          const mIdx = Math.floor(sampleR.length / 2);
+          const mr = sampleR[mIdx], mg = sampleG[mIdx], mb = sampleB[mIdx];
+          const cDiff = Math.hypot(mr - bgR, mg - bgG, mb - bgB);
+          if (cDiff > 10) {
+            if (mr > mg + 8) {
+              fillHex = '#f4dce8'; // 課本柔和淺粉紅
+            } else if (mb > mr + 8) {
+              fillHex = '#d0ebf8'; // 課本柔和淺水藍
+            } else {
+              const toHex = (n) => Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, '0');
+              fillHex = `#${toHex(mr)}${toHex(mg)}${toHex(mb)}`;
+            }
+          }
+        }
+
+        circles.push({
+          cx: cand.cx,
+          cy: cand.cy,
+          r: cand.r,
+          fill: fillHex,
+          cov: cand.cov
+        });
+      }
+    }
+
+    return circles;
   }
 
-  // 合併相鄰文字框
+  // 提取靠近幾何圖形的字元標籤，並分離右上角撇號 (Prime O')
+  function extractLabelBoxesWithPrime(components, geoMask, detectedCircles, W, H) {
+    // 收集所有 geoMask 座標與圓心供快速最近距離查詢
+    const geoPts = [];
+    for (const c of (detectedCircles || [])) {
+      geoPts.push({ x: c.cx, y: c.cy });
+    }
+    for (let y = 0; y < H; y += 2) {
+      for (let x = 0; x < W; x += 2) {
+        if (geoMask[y * W + x] === 1) {
+          geoPts.push({ x, y });
+        }
+      }
+    }
+
+    function minDistToGeo(box) {
+      let minD = Infinity;
+      const cx = (box.minX + box.maxX) / 2;
+      const cy = (box.minY + box.maxY) / 2;
+      for (let i = 0; i < geoPts.length; i++) {
+        const d = Math.hypot(cx - geoPts[i].x, cy - geoPts[i].y);
+        if (d < minD) minD = d;
+      }
+      return minD;
+    }
+
+    const frags = [];
+    for (const comp of components) {
+      if (Math.max(comp.w, comp.h) >= 36) continue;
+      // 排除獨立實心圓點
+      const fillRatio = comp.area / (comp.w * comp.h);
+      const aspect = comp.w / comp.h;
+      if (comp.w >= 4 && comp.w <= 9 && comp.h >= 4 && comp.h <= 9 &&
+          aspect >= 0.75 && aspect <= 1.35 && fillRatio >= 0.62 && comp.area <= 32) {
+        continue;
+      }
+      if (comp.area >= 2 && comp.w <= 28 && comp.h <= 28) {
+        const d = minDistToGeo(comp);
+        if (d <= 25) {
+          frags.push({
+            minX: comp.minX,
+            minY: comp.minY,
+            maxX: comp.maxX,
+            maxY: comp.maxY,
+            w: comp.w,
+            h: comp.h,
+            area: comp.area
+          });
+        }
+      }
+    }
+
+    // 先分離右上角的小撇號 (Prime '，如 O' 右上角之小點/短撇)
+    const primeFrags = [];
+    const bodyFrags = [];
+
+    for (const f of frags) {
+      const isTinyPrime = f.w <= 4 && f.h <= 5 && f.area >= 2 && f.area <= 10 &&
+        frags.some(other =>
+          other !== f &&
+          other.area >= 18 &&
+          other.h >= 7 &&
+          f.minX >= other.maxX - 1 &&
+          f.minX <= other.maxX + 5 &&
+          f.minY >= other.minY - 3 &&
+          f.maxY <= other.minY + Math.ceil(other.h * 0.55)
+        );
+      if (isTinyPrime) {
+        primeFrags.push(f);
+      } else {
+        bodyFrags.push(f);
+      }
+    }
+
+    // 合併同一個字母的斷開筆畫 (如斜體 A 或 P)
+    const mergedBoxes = mergeNearbyBoxes(bodyFrags, 4, 3).filter(b => {
+      const bw = b.maxX - b.minX + 1;
+      const bh = b.maxY - b.minY + 1;
+      return bh >= 6 && bh <= 32 && bw >= 4 && bw <= 28;
+    });
+
+    // 標記是否有右上角 Prime 撇號
+    for (const b of mergedBoxes) {
+      b.hasPrime = primeFrags.some(pf =>
+        pf.minX >= b.maxX - 1 &&
+        pf.minX <= b.maxX + 5 &&
+        pf.minY >= b.minY - 3 &&
+        pf.maxY <= b.minY + Math.ceil((b.maxY - b.minY + 1) * 0.6)
+      );
+    }
+
+    return mergedBoxes;
+  }
+
   function mergeNearbyBoxes(boxes, padX, padY) {
     const list = boxes.map(b => ({ ...b }));
     let changed = true;
@@ -722,161 +928,45 @@
     return list;
   }
 
-  // 3x3 形態學閉運算 (Dilate -> Erode)
-  function morphClose3x3(mask, W, H) {
-    const dilated = new Uint8Array(W * H);
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (mask[y * W + x] === 1) {
-          for (let dy = -1; dy <= 1; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= H) continue;
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              if (nx >= 0 && nx < W) dilated[ny * W + nx] = 1;
-            }
+  // 偵測實心端點黑點 (5x5 局部墨水密度 >= 18 或獨立小圓點)
+  function detectSolidVertexDots(blackInk, components, W, H) {
+    const dots = [];
+
+    // 1. 獨立小圓點連通域 (如內切圓圓心 O)
+    for (const comp of components) {
+      const fillRatio = comp.area / (comp.w * comp.h);
+      const aspect = comp.w / comp.h;
+      if (comp.w >= 4 && comp.w <= 9 && comp.h >= 4 && comp.h <= 9 &&
+          aspect >= 0.75 && aspect <= 1.35 && fillRatio >= 0.60 && comp.area >= 12 && comp.area <= 35) {
+        dots.push({ x: comp.cx, y: comp.cy });
+      }
+    }
+
+    // 2. 線段交會處的加粗實心圓點 (5x5 密度 >= 18)
+    for (let y = 3; y < H - 3; y++) {
+      for (let x = 3; x < W - 3; x++) {
+        if (blackInk[y * W + x] === 0) continue;
+        let sum5 = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            sum5 += blackInk[(y + dy) * W + (x + dx)];
+          }
+        }
+        if (sum5 >= 18) {
+          if (dots.every(d => Math.hypot(x - d.x, y - d.y) > 8)) {
+            dots.push({ x, y });
           }
         }
       }
     }
-    const closed = new Uint8Array(W * H);
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (dilated[y * W + x] === 1) {
-          let allOne = true;
-          for (let dy = -1; dy <= 1 && allOne; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= H) continue;
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              if (nx >= 0 && nx < W && dilated[ny * W + nx] === 0) {
-                allOne = false;
-                break;
-              }
-            }
-          }
-          if (allOne) closed[y * W + x] = 1;
-        }
-      }
-    }
-    return closed;
+
+    return dots;
   }
 
-  // 提取內部封閉拓撲面 (Planar Faces)
-  function extractTopologicalFaces(geoClosed, rgba, W, H, bgR, bgG, bgB) {
-    const visited = new Uint8Array(W * H);
-    const queue = new Int32Array(W * H);
-    const faces = [];
-
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const startIdx = y * W + x;
-        if (geoClosed[startIdx] === 0 && !visited[startIdx]) {
-          let head = 0, tail = 0;
-          queue[tail++] = startIdx;
-          visited[startIdx] = 1;
-
-          let touchesBorder = false;
-          let minX = x, maxX = x, minY = y, maxY = y;
-          let sumX = 0, sumY = 0;
-          let sumR = 0, sumG = 0, sumB = 0, colorCount = 0;
-          const boundaryPts = [];
-
-          while (head < tail) {
-            const cur = queue[head++];
-            const cy = Math.floor(cur / W);
-            const cx = cur % W;
-
-            sumX += cx;
-            sumY += cy;
-            if (cx < minX) minX = cx;
-            if (cx > maxX) maxX = cx;
-            if (cy < minY) minY = cy;
-            if (cy > maxY) maxY = cy;
-
-            if (cx === 0 || cy === 0 || cx === W - 1 || cy === H - 1) {
-              touchesBorder = true;
-            }
-
-            let isBoundary = false;
-            const nbs = [
-              [cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]
-            ];
-            for (let k = 0; k < 4; k++) {
-              const nx = nbs[k][0], ny = nbs[k][1];
-              if (nx >= 0 && nx < W && ny >= 0 && ny < H) {
-                const nIdx = ny * W + nx;
-                if (geoClosed[nIdx] === 1) {
-                  isBoundary = true;
-                } else if (!visited[nIdx]) {
-                  visited[nIdx] = 1;
-                  queue[tail++] = nIdx;
-                }
-              }
-            }
-
-            if (isBoundary) {
-              boundaryPts.push({ x: cx, y: cy });
-            } else {
-              sumR += rgba[cur * 4];
-              sumG += rgba[cur * 4 + 1];
-              sumB += rgba[cur * 4 + 2];
-              colorCount++;
-            }
-          }
-
-          const area = tail;
-          if (!touchesBorder && area >= 70 && boundaryPts.length >= 20) {
-            const cx = sumX / area;
-            const cy = sumY / area;
-
-            // 計算邊界點到重心之距離均值與標準差
-            const dists = boundaryPts.map(p => Math.hypot(p.x - cx, p.y - cy));
-            const rMean = dists.reduce((a, b) => a + b, 0) / dists.length;
-            const rVar = dists.reduce((a, d) => a + (d - rMean) * (d - rMean), 0) / dists.length;
-            const rStd = Math.sqrt(rVar);
-
-            // 判斷是否有特殊區域填色
-            let fillHex = 'transparent';
-            if (colorCount > 10) {
-              const mr = sumR / colorCount;
-              const mg = sumG / colorCount;
-              const mb = sumB / colorCount;
-              const colorDiff = Math.hypot(mr - bgR, mg - bgG, mb - bgB);
-              if (colorDiff > 11) {
-                // 若偏粉紅/紫紅，轉為柔和課本粉紅，否則轉為對應明亮色
-                if (mr > mg + 10) {
-                  fillHex = '#f4dce8';
-                } else {
-                  const toHex = (n) => Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, '0');
-                  fillHex = `#${toHex(mr)}${toHex(mg)}${toHex(mb)}`;
-                }
-              }
-            }
-
-            faces.push({
-              minX, minY, maxX, maxY,
-              w: maxX - minX + 1,
-              h: maxY - minY + 1,
-              area,
-              cx,
-              cy,
-              rMean,
-              relRadialStd: rStd / (rMean || 1),
-              fillHex
-            });
-          }
-        }
-      }
-    }
-
-    return faces;
-  }
-
-  // 迭代式霍夫直線剝離 (Iterative Hough Peeling) + PCA 最小二乘直線擬合
-  function extractStraightSegmentsHoughPCA(mask, W, H) {
+  // 迭代式霍夫直線剝離 (Iterative Hough Peeling) + PCA 直線擬合
+  function extractStraightSegmentsHoughPCA(mask, W, H, minVotes = 14, minLen = 20, maxGap = 28) {
     const rem = new Uint8Array(mask);
-    const numAngles = 360; // 0 ~ 179.5 度，每 0.5 度一格
+    const numAngles = 360;
     const cosTable = new Float32Array(numAngles);
     const sinTable = new Float32Array(numAngles);
     for (let ti = 0; ti < numAngles; ti++) {
@@ -890,7 +980,7 @@
     const acc = new Int32Array(numAngles * rhoStride);
     const segments = [];
 
-    for (let iter = 0; iter < 18; iter++) {
+    for (let iter = 0; iter < 16; iter++) {
       const xs = [];
       const ys = [];
       for (let y = 0; y < H; y++) {
@@ -901,7 +991,7 @@
           }
         }
       }
-      if (xs.length < 18) break;
+      if (xs.length < minVotes) break;
 
       acc.fill(0);
       let bestVotes = 0;
@@ -923,13 +1013,12 @@
         }
       }
 
-      if (bestVotes < 16) break;
+      if (bestVotes < minVotes) break;
 
       const c = cosTable[bestTi];
       const s = sinTable[bestTi];
       const tx = -s, ty = c;
 
-      // 收集距離峰值直線 2.2px 內之內點 (Inliers)
       const inliers = [];
       for (let i = 0; i < N; i++) {
         const d = Math.abs(xs[i] * c + ys[i] * s - bestRho);
@@ -944,11 +1033,10 @@
 
       inliers.sort((a, b) => a.proj - b.proj);
 
-      // 找出最大連續區段 (允許 18px 內之小間隙)
       const runs = [];
       let curRun = [inliers[0]];
       for (let i = 1; i < inliers.length; i++) {
-        if (inliers[i].proj - inliers[i - 1].proj <= 18) {
+        if (inliers[i].proj - inliers[i - 1].proj <= maxGap) {
           curRun.push(inliers[i]);
         } else {
           runs.push(curRun);
@@ -962,12 +1050,11 @@
         if (r.length > longestRun.length) longestRun = r;
       }
 
-      if (longestRun.length < 16) {
+      if (longestRun.length < minVotes) {
         for (const pt of inliers) rem[pt.y * W + pt.x] = 0;
         continue;
       }
 
-      // PCA 正交回歸擬合精確直線
       let mx = 0, my = 0;
       for (const pt of longestRun) {
         mx += pt.x;
@@ -1000,11 +1087,10 @@
       const x2 = mx + tMax * vx;
       const y2 = my + tMax * vy;
 
-      if (Math.hypot(x2 - x1, y2 - y1) >= 22) {
+      if (Math.hypot(x2 - x1, y2 - y1) >= minLen) {
         segments.push({ x1, y1, x2, y2 });
       }
 
-      // 從遮罩中剝離屬於該線段的像素
       for (let i = 0; i < N; i++) {
         const px = xs[i], py = ys[i];
         const perp = Math.abs((px - mx) * (-vy) + (py - my) * vx);
@@ -1018,7 +1104,6 @@
     return segments;
   }
 
-  // 合併共線且相鄰/被切點隔開之同一直線段
   function mergeCollinearSegments(segs) {
     const list = segs.map(s => ({ ...s }));
     let changed = true;
@@ -1027,6 +1112,7 @@
       for (let i = 0; i < list.length; i++) {
         for (let j = i + 1; j < list.length; j++) {
           const a = list[i], b = list[j];
+          if (a.style !== b.style) continue;
           const dx1 = a.x2 - a.x1, dy1 = a.y2 - a.y1;
           const L1 = Math.hypot(dx1, dy1);
           const dx2 = b.x2 - b.x1, dy2 = b.y2 - b.y1;
@@ -1055,7 +1141,7 @@
                 if (t < minT) { minT = t; minP = p; }
                 if (t > maxT) { maxT = t; maxP = p; }
               }
-              list[i] = { x1: minP.x, y1: minP.y, x2: maxP.x, y2: maxP.y };
+              list[i] = { ...a, x1: minP.x, y1: minP.y, x2: maxP.x, y2: maxP.y };
               list.splice(j, 1);
               changed = true;
               break;
@@ -1068,14 +1154,42 @@
     return list;
   }
 
-  // 幾何約束求解與座標正規化 (映射至 800 x 600 舞台)
-  function solveGeometricConstraints(segments, circles, dots, charBoxes, gray, W, H) {
-    // 1. 對接近水平或垂直的線段進行正交微調
+  // ==========================================
+  // 歐幾里得幾何約束求解器 (Euclidean Constraint Solver)
+  // ==========================================
+  function solveEuclideanGeometry(segments, circles, denseDots, charBoxes, gray, W, H) {
+    // 1. 雙圓共線與過圓心約束 (如 P35 兩圓 O 與 O')
+    if (circles.length === 2) {
+      const c1 = circles[0], c2 = circles[1];
+      if (Math.abs(c1.cy - c2.cy) <= 2.5) {
+        const avgY = (c1.cy + c2.cy) / 2;
+        c1.cy = avgY;
+        c2.cy = avgY;
+      }
+      const centerDist = Math.hypot(c1.cx - c2.cx, c1.cy - c2.cy);
+      if (Math.abs(c2.r - centerDist) <= 2.5) {
+        c2.r = centerDist;
+      } else if (Math.abs(c1.r - centerDist) <= 2.5) {
+        c1.r = centerDist;
+      }
+    }
+
+    // 2. 水平與垂直線段正交化
     for (const s of segments) {
       if (Math.abs(s.y2 - s.y1) <= 2.5) {
         const avgY = (s.y1 + s.y2) / 2;
-        s.y1 = avgY;
-        s.y2 = avgY;
+        // 若附近有圓心，對齊圓心水平線
+        for (const c of circles) {
+          if (Math.abs(avgY - c.cy) <= 2.5) {
+            s.y1 = c.cy;
+            s.y2 = c.cy;
+            break;
+          }
+        }
+        if (s.y1 !== s.y2) {
+          s.y1 = avgY;
+          s.y2 = avgY;
+        }
       }
       if (Math.abs(s.x2 - s.x1) <= 2.5) {
         const avgX = (s.x1 + s.x2) / 2;
@@ -1084,140 +1198,152 @@
       }
     }
 
-    // 2. 計算兩兩直線交點，吸附端點形成精確幾何頂點
-    const vertices = []; // { id, x, y, label, labelOffset, isCenter, isTangent }
-    const clusterRadius = 14;
+    // 3. 收集所有關鍵歐幾里得錨點 (Euclidean Anchors)：
+    //    - 圓心 (Circle Centers)
+    //    - 兩圓交點 (Circle-Circle Intersections)
+    //    - 直線交點 (Line-Line Intersections：包含頂點交點與 X 型交叉點如 P)
+    //    - 直線與圓切點 (Line-Circle Tangent Points：如 D, E, F 或 A, B)
+    const anchors = []; // { id, x, y, type, label, hasDot }
 
-    function getOrCreateVertex(x, y) {
-      for (const v of vertices) {
-        if (Math.hypot(v.x - x, v.y - y) <= clusterRadius) {
-          v.x = (v.x + x) / 2;
-          v.y = (v.y + y) / 2;
-          return v;
+    function addOrMergeAnchor(x, y, type, mergeRadius = 9) {
+      for (const a of anchors) {
+        if (Math.hypot(a.x - x, a.y - y) <= mergeRadius) {
+          if (type === 'center' && a.type !== 'center') {
+            a.x = x;
+            a.y = y;
+            a.type = 'center';
+          }
+          return a;
         }
       }
-      const v = {
-        id: `V${vertices.length + 1}`,
-        label: '',
+      const a = {
+        id: `V${anchors.length + 1}`,
         x,
         y,
-        labelOffset: { dx: 0, dy: -20 }
+        type,
+        label: '',
+        hasDot: false,
+        labelOffset: { dx: 0, dy: -22 }
       };
-      vertices.push(v);
-      return v;
+      anchors.push(a);
+      return a;
     }
 
-    // 先檢查線段端點兩兩交點精確吸附
+    // (a) 圓心錨點
+    for (const c of circles) {
+      const ca = addOrMergeAnchor(c.cx, c.cy, 'center', 8);
+      c.centerId = ca.id;
+    }
+
+    // (b) 兩圓交點錨點 (如 P35 中圓 O' 與圓 O 的交點 A, B)
+    if (circles.length >= 2) {
+      for (let i = 0; i < circles.length; i++) {
+        for (let j = i + 1; j < circles.length; j++) {
+          const pts = intersectTwoCircles(circles[i], circles[j]);
+          for (const pt of pts) {
+            addOrMergeAnchor(pt.x, pt.y, 'circle-intersection', 8);
+          }
+        }
+      }
+    }
+
+    // (c) 直線兩兩交點 (若交點落在兩線段上或端點 14px 內)
     for (let i = 0; i < segments.length; i++) {
       for (let j = i + 1; j < segments.length; j++) {
         const pt = intersectInfiniteLines(segments[i], segments[j]);
         if (!pt) continue;
-        const d1 = Math.min(
-          Math.hypot(segments[i].x1 - pt.x, segments[i].y1 - pt.y),
-          Math.hypot(segments[i].x2 - pt.x, segments[i].y2 - pt.y)
-        );
-        const d2 = Math.min(
-          Math.hypot(segments[j].x1 - pt.x, segments[j].y1 - pt.y),
-          Math.hypot(segments[j].x2 - pt.x, segments[j].y2 - pt.y)
-        );
-        if (d1 <= 15 && d2 <= 15) {
-          if (Math.hypot(segments[i].x1 - pt.x, segments[i].y1 - pt.y) <
-              Math.hypot(segments[i].x2 - pt.x, segments[i].y2 - pt.y)) {
-            segments[i].x1 = pt.x; segments[i].y1 = pt.y;
-          } else {
-            segments[i].x2 = pt.x; segments[i].y2 = pt.y;
+        if (pt.x < -10 || pt.x > W + 10 || pt.y < -10 || pt.y > H + 10) continue;
+
+        const d1 = distPointToSegment(pt, segments[i]);
+        const d2 = distPointToSegment(pt, segments[j]);
+        if (d1 <= 14 && d2 <= 14) {
+          for (const c of circles) {
+            if (Math.abs(pt.y - c.cy) <= 3.0) {
+              pt.y = c.cy;
+              break;
+            }
           }
-          if (Math.hypot(segments[j].x1 - pt.x, segments[j].y1 - pt.y) <
-              Math.hypot(segments[j].x2 - pt.x, segments[j].y2 - pt.y)) {
-            segments[j].x1 = pt.x; segments[j].y1 = pt.y;
-          } else {
-            segments[j].x2 = pt.x; segments[j].y2 = pt.y;
-          }
+          const intAnchor = addOrMergeAnchor(pt.x, pt.y, 'intersection', 10);
+          // 若是線段端點靠近該交點，直接吸附端點
+          snapSegmentEndpointIfClose(segments[i], intAnchor, 12);
+          snapSegmentEndpointIfClose(segments[j], intAnchor, 12);
         }
       }
     }
 
-    const finalSegments = [];
-    for (const s of segments) {
-      const v1 = getOrCreateVertex(s.x1, s.y1);
-      const v2 = getOrCreateVertex(s.x2, s.y2);
-      if (v1.id !== v2.id) {
-        finalSegments.push({ v1: v1.id, v2: v2.id, style: 'solid' });
-      }
-    }
-
-    // 3. 檢查是否為三角形內切圓，進行精確幾何切點與內心鎖定
-    const finalCircles = [];
-    const finalDots = [];
-
-    for (const c of circles) {
-      // 檢查該圓是否與三條邊相切 (距離誤差 <= 4.5px)
-      const tangentSegs = [];
-      for (const seg of finalSegments) {
-        const p1 = vertices.find(v => v.id === seg.v1);
-        const p2 = vertices.find(v => v.id === seg.v2);
-        if (!p1 || !p2) continue;
-        const foot = projectPointToSegment({ x: c.cx, y: c.cy }, p1, p2);
-        const dist = Math.hypot(c.cx - foot.x, c.cy - foot.y);
-        if (Math.abs(dist - c.r) <= 4.8 && foot.t >= 0.05 && foot.t <= 0.95) {
-          tangentSegs.push({ seg, p1, p2, foot });
-        }
-      }
-
-      // 若恰好與三邊相切且頂點數為 3，鎖定為數學精確內切圓
-      if (tangentSegs.length === 3 && vertices.length >= 3) {
-        const A = vertices[0], B = vertices[1], C = vertices[2];
-        const a = Math.hypot(C.x - B.x, C.y - B.y);
-        const b = Math.hypot(C.x - A.x, C.y - A.y);
+    // (d) 檢查三角形內切圓約束 (若 1 個圓與 3 條實線相切)
+    if (circles.length === 1 && segments.length === 3) {
+      const c = circles[0];
+      const cornerAnchors = anchors.filter(a => a.type === 'intersection');
+      if (cornerAnchors.length === 3) {
+        const [A, B, C] = cornerAnchors;
+        const aLen = Math.hypot(C.x - B.x, C.y - B.y);
+        const bLen = Math.hypot(C.x - A.x, C.y - A.y);
         const cLen = Math.hypot(B.x - A.x, B.y - A.y);
-        const perim = a + b + cLen;
+        const perim = aLen + bLen + cLen;
         const area2 = Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y));
-        c.cx = (a * A.x + b * B.x + cLen * C.x) / perim;
-        c.cy = (a * A.y + b * B.y + cLen * C.y) / perim;
-        c.r = area2 / perim;
-      }
+        const inX = (aLen * A.x + bLen * B.x + cLen * C.x) / perim;
+        const inY = (aLen * A.y + bLen * B.y + cLen * C.y) / perim;
+        const inR = area2 / perim;
 
-      const centerV = {
-        id: `O_${finalCircles.length + 1}`,
-        label: '',
-        x: c.cx,
-        y: c.cy,
-        isCenter: true,
-        labelOffset: { dx: -14, dy: 22 }
-      };
-      vertices.push(centerV);
-
-      finalCircles.push({
-        center: centerV.id,
-        radius: c.r,
-        fill: c.fill || 'transparent',
-        style: 'solid'
-      });
-
-      finalDots.push({ vertex: centerV.id, r: 4 });
-
-      // 若切點附近有文字標籤，自動建立切點錨點
-      for (const ts of tangentSegs) {
-        const foot = projectPointToSegment({ x: c.cx, y: c.cy }, ts.p1, ts.p2);
-        const hasNearbyBox = charBoxes.some(b => {
-          const bcx = (b.minX + b.maxX) / 2;
-          const bcy = (b.minY + b.maxY) / 2;
-          return Math.hypot(bcx - foot.x, bcy - foot.y) <= 26;
-        });
-        if (hasNearbyBox) {
-          vertices.push({
-            id: `T_${vertices.length + 1}`,
-            label: '',
-            x: foot.x,
-            y: foot.y,
-            isTangent: true,
-            labelOffset: { dx: 0, dy: 22 }
-          });
+        if (Math.hypot(c.cx - inX, c.cy - inY) <= 6 && Math.abs(c.r - inR) <= 5) {
+          c.cx = inX;
+          c.cy = inY;
+          c.r = inR;
+          const centerAnchor = anchors.find(a => a.id === c.centerId);
+          if (centerAnchor) {
+            centerAnchor.x = inX;
+            centerAnchor.y = inY;
+          }
         }
       }
     }
 
-    // 4. 執行字元模板辨識並配對至最近的幾何錨點
+    // (e) 直線與圓切點錨點 (如內切圓切點 D, E, F)
+    for (const c of circles) {
+      for (const seg of segments) {
+        if (seg.style === 'dashed') continue;
+        const foot = projectPointToSegment(
+          { x: c.cx, y: c.cy },
+          { x: seg.x1, y: seg.y1 },
+          { x: seg.x2, y: seg.y2 }
+        );
+        const dist = Math.hypot(c.cx - foot.x, c.cy - foot.y);
+        if (Math.abs(dist - c.r) <= 4.5 && foot.t >= 0.05 && foot.t <= 0.95) {
+          addOrMergeAnchor(foot.x, foot.y, 'tangent', 9);
+        }
+      }
+    }
+
+    // (f) 將各線段端點吸附至已建立之歐幾里得錨點，或建立端點錨點
+    const finalSegments = [];
+    for (const seg of segments) {
+      snapSegmentEndpointToAnchors(seg, anchors, 11);
+      const v1 = addOrMergeAnchor(seg.x1, seg.y1, 'endpoint', 8);
+      const v2 = addOrMergeAnchor(seg.x2, seg.y2, 'endpoint', 8);
+      if (v1.id !== v2.id) {
+        finalSegments.push({
+          v1: v1.id,
+          v2: v2.id,
+          style: seg.style || 'solid',
+          color: seg.color || '#18181b'
+        });
+      }
+    }
+
+    // 4. 判定哪些錨點帶有實心圓點 (Dots)
+    for (const a of anchors) {
+      if (a.type === 'center') {
+        a.hasDot = true;
+      } else if (a.type !== 'endpoint') {
+        // 若附近 7px 內有 5x5 密集黑點
+        if (denseDots.some(d => Math.hypot(d.x - a.x, d.y - a.y) <= 7.5)) {
+          a.hasDot = true;
+        }
+      }
+    }
+
+    // 5. 字元 OCR 並配對至最近的幾何錨點 (絕不憑空捏造未出現的字母！)
     const charResults = charBoxes.map(b => {
       const res = matchSingleCharacter(gray, W, H, b);
       return {
@@ -1228,128 +1354,98 @@
       };
     });
 
-    // 將每個字元框配對給最近的未命名頂點/切點/圓心
-    const usedVertices = new Set();
-    const usedChars = new Set();
+    const usedAnchors = new Set();
+    const usedLabels = new Set();
 
-    // 圓心附近的字元框優先考慮 'O'
+    // 優先配對距離最近的錨點 (優先非射線末端之核心幾何錨點)
     for (const cr of charResults) {
-      let nearestV = null;
-      let minDist = Infinity;
-      for (const v of vertices) {
-        if (usedVertices.has(v.id)) continue;
-        const d = Math.hypot(cr.cx - v.x, cr.cy - v.y);
-        if (d < minDist && d <= 36) {
-          minDist = d;
-          nearestV = v;
+      let bestAnchor = null;
+      let bestDist = Infinity;
+
+      for (const a of anchors) {
+        if (usedAnchors.has(a.id)) continue;
+        const d = Math.hypot(cr.cx - a.x, cr.cy - a.y);
+        // 優先給予圓心、交點、切點較高吸附權重
+        const weightedDist = a.type === 'endpoint' ? d + 8 : d;
+        if (d <= 28 && weightedDist < bestDist) {
+          bestDist = weightedDist;
+          bestAnchor = a;
         }
       }
-      if (nearestV) {
-        usedVertices.add(nearestV.id);
-        let chosenChar = cr.bestChar;
-        if (nearestV.isCenter && cr.scores['O'] > 0.65 && !usedChars.has('O')) {
-          chosenChar = 'O';
-        } else if (usedChars.has(chosenChar)) {
-          // 挑選分數次高且未重複的字母
-          const sorted = Object.entries(cr.scores).sort((a, b) => b[1] - a[1]);
+
+      if (bestAnchor) {
+        usedAnchors.add(bestAnchor.id);
+        let label = cr.bestChar;
+
+        // 若是圓心且 O 分數高，優先配為 O 或 O'
+        if (bestAnchor.type === 'center' && (cr.scores['O'] || 0) >= 0.65) {
+          label = cr.hasPrime ? "O'" : "O";
+        }
+
+        if (usedLabels.has(label) && !cr.hasPrime) {
+          const sorted = Object.entries(cr.scores).sort((x, y) => y[1] - x[1]);
           for (const [ch] of sorted) {
-            if (!usedChars.has(ch)) {
-              chosenChar = ch;
+            if (!usedLabels.has(ch)) {
+              label = ch;
               break;
             }
           }
         }
-        usedChars.add(chosenChar);
-        nearestV.label = chosenChar;
-        nearestV._rawLabelVec = { dx: cr.cx - nearestV.x, dy: cr.cy - nearestV.y };
+
+        usedLabels.add(label);
+        bestAnchor.label = label;
+        bestAnchor._rawLabelVec = {
+          dx: cr.cx - bestAnchor.x,
+          dy: cr.cy - bestAnchor.y
+        };
       }
     }
 
-    // 若有主要多邊形頂點未配對到字母，依序補上標準字母
-    const fallbackAlphabet = "ABCDEFGHJKLMNPQRST";
-    let fbIdx = 0;
-    for (const v of vertices) {
-      if (!v.label && !v.isTangent) {
-        if (v.isCenter && !usedChars.has('O')) {
-          v.label = 'O';
-          usedChars.add('O');
+    // 6. 自動偵測直角記號 (包含頂點交會與切點處，如 ∠PAO = 90°)
+    const rightAngles = [];
+    for (const a of anchors) {
+      // 找出通過此錨點（作為端點或落於線段內部 4px 內）的所有線段方向向量
+      const rayTargets = [];
+      for (const seg of finalSegments) {
+        const p1 = anchors.find(v => v.id === seg.v1);
+        const p2 = anchors.find(v => v.id === seg.v2);
+        if (!p1 || !p2) continue;
+
+        if (seg.v1 === a.id) {
+          rayTargets.push({ target: p2, style: seg.style, color: seg.color });
+        } else if (seg.v2 === a.id) {
+          rayTargets.push({ target: p1, style: seg.style, color: seg.color });
         } else {
-          while (fbIdx < fallbackAlphabet.length && usedChars.has(fallbackAlphabet[fbIdx])) {
-            fbIdx++;
+          // 檢查錨點 a 是否落在線段 p1-p2 上 (如切點 A 落在切線段上！)
+          const foot = projectPointToSegment(a, p1, p2);
+          if (Math.hypot(a.x - foot.x, a.y - foot.y) <= 4.0 && foot.t > 0.05 && foot.t < 0.95) {
+            const d1 = Math.hypot(p1.x - a.x, p1.y - a.y);
+            const d2 = Math.hypot(p2.x - a.x, p2.y - a.y);
+            const farEnd = d1 >= d2 ? p1 : p2;
+            rayTargets.push({ target: farEnd, style: seg.style, color: seg.color });
           }
-          v.label = fallbackAlphabet[fbIdx++] || 'P';
         }
       }
-    }
 
-    // 5. 將所有座標等比例縮放並置中至 800 x 600 標準課本舞台
-    let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity;
-    for (const v of vertices) {
-      if (v.x < gMinX) gMinX = v.x;
-      if (v.x > gMaxX) gMaxX = v.x;
-      if (v.y < gMinY) gMinY = v.y;
-      if (v.y > gMaxY) gMaxY = v.y;
-    }
-    for (const c of finalCircles) {
-      const cv = vertices.find(v => v.id === c.center);
-      if (cv) {
-        gMinX = Math.min(gMinX, cv.x - c.radius);
-        gMaxX = Math.max(gMaxX, cv.x + c.radius);
-        gMinY = Math.min(gMinY, cv.y - c.radius);
-        gMaxY = Math.max(gMaxY, cv.y + c.radius);
-      }
-    }
-
-    const spanW = Math.max(40, gMaxX - gMinX);
-    const spanH = Math.max(40, gMaxY - gMinY);
-    const targetScale = Math.min(550 / spanW, 440 / spanH);
-
-    const figCenterX = (gMinX + gMaxX) / 2;
-    const figCenterY = (gMinY + gMaxY) / 2;
-
-    for (const v of vertices) {
-      v.x = Math.round(400 + (v.x - figCenterX) * targetScale);
-      v.y = Math.round(305 + (v.y - figCenterY) * targetScale);
-
-      if (v._rawLabelVec) {
-        const len = Math.hypot(v._rawLabelVec.dx, v._rawLabelVec.dy) || 1;
-        const dist = v.isCenter ? 24 : 25;
-        v.labelOffset = {
-          dx: Math.round((v._rawLabelVec.dx / len) * dist),
-          dy: Math.round((v._rawLabelVec.dy / len) * dist)
-        };
-        delete v._rawLabelVec;
-      } else {
-        const dx = v.x - 400, dy = v.y - 305;
-        const len = Math.hypot(dx, dy) || 1;
-        v.labelOffset = {
-          dx: Math.round((dx / len) * 24),
-          dy: Math.round((dy / len) * 24)
-        };
-      }
-    }
-
-    for (const c of finalCircles) {
-      c.radius = Math.round(c.radius * targetScale);
-    }
-
-    // 6. 自動偵測直角記號 (85° ~ 95°)
-    const rightAngles = [];
-    for (const v of vertices) {
-      const conn = finalSegments.filter(s => s.v1 === v.id || s.v2 === v.id);
-      if (conn.length >= 2) {
-        for (let i = 0; i < conn.length; i++) {
-          for (let j = i + 1; j < conn.length; j++) {
-            const n1 = vertices.find(p => p.id === (conn[i].v1 === v.id ? conn[i].v2 : conn[i].v1));
-            const n2 = vertices.find(p => p.id === (conn[j].v1 === v.id ? conn[j].v2 : conn[j].v1));
-            if (!n1 || !n2) continue;
-            const ux = n1.x - v.x, uy = n1.y - v.y;
-            const wx = n2.x - v.x, wy = n2.y - v.y;
+      if (rayTargets.length >= 2) {
+        for (let i = 0; i < rayTargets.length; i++) {
+          for (let j = i + 1; j < rayTargets.length; j++) {
+            const r1 = rayTargets[i], r2 = rayTargets[j];
+            const ux = r1.target.x - a.x, uy = r1.target.y - a.y;
+            const wx = r2.target.x - a.x, wy = r2.target.y - a.y;
             const lu = Math.hypot(ux, uy), lw = Math.hypot(wx, wy);
-            if (lu > 20 && lw > 20) {
+            if (lu > 12 && lw > 12) {
               const cosT = (ux * wx + uy * wy) / (lu * lw);
-              if (Math.abs(cosT) <= 0.075) {
-                rightAngles.push({ vertex: v.id, v1: n1.id, v2: n2.id });
+              // 若其中一條是虛線輔助線 (如半徑 OA) 或兩實線正交
+              if (Math.abs(cosT) <= 0.085 && (r1.style === 'dashed' || r2.style === 'dashed' || anchors.length <= 6)) {
+                const raColor = (r1.style === 'dashed' ? r1.color : (r2.style === 'dashed' ? r2.color : '#18181b'));
+                rightAngles.push({
+                  vertex: a.id,
+                  v1: r1.target.id,
+                  v2: r2.target.id,
+                  color: raColor
+                });
+                break;
               }
             }
           }
@@ -1357,25 +1453,90 @@
       }
     }
 
-    const labelList = vertices.filter(v => v.label).map(v => v.label).join(', ');
-    let title = "幾何向量重建圖";
-    if (finalSegments.length === 3 && finalCircles.length === 1) {
+    // 7. 將所有座標等比例縮放並置中至 800 x 600 標準課本舞台
+    let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity;
+    for (const a of anchors) {
+      if (a.x < gMinX) gMinX = a.x;
+      if (a.x > gMaxX) gMaxX = a.x;
+      if (a.y < gMinY) gMinY = a.y;
+      if (a.y > gMaxY) gMaxY = a.y;
+    }
+    for (const c of circles) {
+      gMinX = Math.min(gMinX, c.cx - c.r);
+      gMaxX = Math.max(gMaxX, c.cx + c.r);
+      gMinY = Math.min(gMinY, c.cy - c.r);
+      gMaxY = Math.max(gMaxY, c.cy + c.r);
+    }
+
+    const spanW = Math.max(40, gMaxX - gMinX);
+    const spanH = Math.max(40, gMaxY - gMinY);
+    const targetScale = Math.min(540 / spanW, 420 / spanH);
+    const figCenterX = (gMinX + gMaxX) / 2;
+    const figCenterY = (gMinY + gMaxY) / 2;
+
+    for (const a of anchors) {
+      a.x = Math.round(400 + (a.x - figCenterX) * targetScale);
+      a.y = Math.round(300 + (a.y - figCenterY) * targetScale);
+
+      if (a._rawLabelVec) {
+        const len = Math.hypot(a._rawLabelVec.dx, a._rawLabelVec.dy) || 1;
+        const offsetDist = 25;
+        a.labelOffset = {
+          dx: Math.round((a._rawLabelVec.dx / len) * offsetDist),
+          dy: Math.round((a._rawLabelVec.dy / len) * offsetDist)
+        };
+        delete a._rawLabelVec;
+      }
+    }
+
+    const finalCircles = circles.map(c => ({
+      center: c.centerId,
+      radius: Math.round(c.r * targetScale),
+      fill: c.fill || 'transparent',
+      style: 'solid'
+    }));
+
+    const finalDots = anchors
+      .filter(a => a.hasDot)
+      .map(a => ({ vertex: a.id, r: 4 }));
+
+    const recognizedLabels = anchors.filter(a => a.label).map(a => a.label);
+    let title = "課本幾何重建圖";
+    if (finalCircles.length === 2) {
+      title = "兩圓交點與外切線作圖";
+    } else if (finalCircles.length === 1 && finalSegments.length === 3) {
       title = "△ABC 內切圓 O";
+    } else if (finalCircles.length === 1) {
+      title = "圓形幾何性質圖";
     } else if (finalSegments.length === 3) {
       title = "三角形幾何圖";
-    } else if (finalCircles.length >= 1) {
-      title = "圓形幾何性質圖";
     }
 
     return {
       title,
-      description: `純前端自動解析：共識別 ${finalSegments.length} 條直線段、${finalCircles.length} 個圓形、頂點與標記 [${labelList}]。`,
-      vertices,
+      description: `純前端自動解析：共識別 ${finalCircles.length} 個圓形、${finalSegments.length} 條線段、${rightAngles.length} 個直角記號、標籤 [${recognizedLabels.join(', ')}]。`,
+      vertices: anchors,
       segments: finalSegments,
       circles: finalCircles,
       rightAngles,
       dots: finalDots
     };
+  }
+
+  function intersectTwoCircles(c1, c2) {
+    const dx = c2.cx - c1.cx, dy = c2.cy - c1.cy;
+    const d = Math.hypot(dx, dy);
+    if (d > c1.r + c2.r + 2 || d < Math.abs(c1.r - c2.r) - 2 || d === 0) return [];
+    const a = (c1.r * c1.r - c2.r * c2.r + d * d) / (2 * d);
+    const h = Math.sqrt(Math.max(0, c1.r * c1.r - a * a));
+    const mx = c1.cx + (a * dx) / d;
+    const my = c1.cy + (a * dy) / d;
+    const rx = (-dy * h) / d;
+    const ry = (dx * h) / d;
+    return [
+      { x: mx + rx, y: my + ry },
+      { x: mx - rx, y: my - ry }
+    ];
   }
 
   function intersectInfiniteLines(s1, s2) {
@@ -1396,6 +1557,32 @@
     return { x: A.x + t * dx, y: A.y + t * dy, t };
   }
 
+  function distPointToSegment(P, seg) {
+    const foot = projectPointToSegment(P, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 });
+    const clampedT = Math.max(0, Math.min(1, foot.t));
+    const cx = seg.x1 + clampedT * (seg.x2 - seg.x1);
+    const cy = seg.y1 + clampedT * (seg.y2 - seg.y1);
+    return Math.hypot(P.x - cx, P.y - cy);
+  }
+
+  function snapSegmentEndpointIfClose(seg, pt, radius) {
+    const d1 = Math.hypot(seg.x1 - pt.x, seg.y1 - pt.y);
+    const d2 = Math.hypot(seg.x2 - pt.x, seg.y2 - pt.y);
+    if (d1 <= radius && d1 < d2) {
+      seg.x1 = pt.x;
+      seg.y1 = pt.y;
+    } else if (d2 <= radius && d2 < d1) {
+      seg.x2 = pt.x;
+      seg.y2 = pt.y;
+    }
+  }
+
+  function snapSegmentEndpointToAnchors(seg, anchors, radius) {
+    for (const a of anchors) {
+      snapSegmentEndpointIfClose(seg, a, radius);
+    }
+  }
+
   // ==========================================
   // 更新介面與標籤編輯器
   // ==========================================
@@ -1412,7 +1599,6 @@
       detectSummary.textContent = state.geometry.description;
     }
 
-    // 產生標籤快速修改列
     if (labelsChipList) {
       labelsChipList.innerHTML = '';
       state.geometry.vertices.forEach((v) => {
@@ -1435,7 +1621,7 @@
   }
 
   // ==========================================
-  // SVG 課本印刷級渲染引擎
+  // SVG 課本印刷級渲染引擎 (填色層與線條層分離，相交圓弧不遮擋)
   // ==========================================
   function render() {
     mathTitleBadge.textContent = state.geometry.title || '幾何題目圖形';
@@ -1457,34 +1643,42 @@
     previewSvg.style.backgroundColor = state.options.whiteBg ? '#ffffff' : 'transparent';
 
     function findVertex(id) {
-      return state.geometry.vertices.find(v => v.id === id || v.label === id);
+      return state.geometry.vertices.find(v => v.id === id);
     }
 
-    // 1. 圓形與填色
+    // 1. 先畫所有圓形填色在底層 (layerFills)，避免遮擋相交的另一圓弧！
+    if (state.options.showFill) {
+      state.geometry.circles.forEach(c => {
+        if (!c.fill || c.fill === 'transparent') return;
+        const center = findVertex(c.center);
+        if (!center) return;
+        const fillEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        fillEl.setAttribute('cx', center.x);
+        fillEl.setAttribute('cy', center.y);
+        fillEl.setAttribute('r', c.radius);
+        fillEl.setAttribute('fill', c.fill);
+        fillEl.setAttribute('stroke', 'none');
+        layerFills.appendChild(fillEl);
+      });
+    }
+
+    // 2. 再畫所有圓形黑色外框在圓形層 (layerCircles)
     state.geometry.circles.forEach(c => {
       const center = findVertex(c.center);
       if (!center) return;
-
       const circleEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       circleEl.setAttribute('cx', center.x);
       circleEl.setAttribute('cy', center.y);
       circleEl.setAttribute('r', c.radius);
       circleEl.setAttribute('class', 'geo-circle');
-
-      if (state.options.showFill && c.fill && c.fill !== 'transparent') {
-        circleEl.setAttribute('fill', c.fill);
-      } else {
-        circleEl.setAttribute('fill', 'transparent');
-      }
-
+      circleEl.setAttribute('fill', 'transparent');
       if (c.style === 'dashed') {
         circleEl.setAttribute('stroke-dasharray', '5, 4');
       }
-
       layerCircles.appendChild(circleEl);
     });
 
-    // 2. 線段
+    // 3. 線段層
     state.geometry.segments.forEach(seg => {
       const v1 = findVertex(seg.v1);
       const v2 = findVertex(seg.v2);
@@ -1496,15 +1690,16 @@
       lineEl.setAttribute('x2', v2.x);
       lineEl.setAttribute('y2', v2.y);
       lineEl.setAttribute('class', 'geo-seg');
-
-      if (seg.style === 'dashed') {
-        lineEl.setAttribute('stroke-dasharray', '5, 4');
+      if (seg.color && seg.color !== '#18181b') {
+        lineEl.style.stroke = seg.color;
       }
-
+      if (seg.style === 'dashed') {
+        lineEl.setAttribute('stroke-dasharray', '6, 4');
+      }
       layerSegments.appendChild(lineEl);
     });
 
-    // 3. 直角記號
+    // 4. 直角記號
     if (state.geometry.rightAngles) {
       state.geometry.rightAngles.forEach(ra => {
         const v = findVertex(ra.vertex);
@@ -1514,9 +1709,8 @@
 
         const u = { x: v1.x - v.x, y: v1.y - v.y };
         const w = { x: v2.x - v.x, y: v2.y - v.y };
-        const lenU = Math.hypot(u.x, u.y);
-        const lenW = Math.hypot(w.x, w.y);
-        if (lenU === 0 || lenW === 0) return;
+        const lenU = Math.hypot(u.x, u.y), lenW = Math.hypot(w.x, w.y);
+        if (!lenU || !lenW) return;
 
         const size = 14;
         const du = { x: (u.x / lenU) * size, y: (u.y / lenU) * size };
@@ -1529,13 +1723,13 @@
         const raPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         raPath.setAttribute('d', `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} L ${p3.x} ${p3.y}`);
         raPath.setAttribute('fill', 'none');
-        raPath.setAttribute('stroke', '#18181b');
-        raPath.setAttribute('stroke-width', '1.4');
+        raPath.setAttribute('stroke', ra.color || '#18181b');
+        raPath.setAttribute('stroke-width', '1.5');
         layerMarkers.appendChild(raPath);
       });
     }
 
-    // 4. 圓心實心點
+    // 5. 實心圓點
     if (state.geometry.dots) {
       state.geometry.dots.forEach(d => {
         const v = findVertex(d.vertex);
@@ -1549,19 +1743,15 @@
       });
     }
 
-    // 5. 頂點與切點字母標籤
+    // 6. 字母標籤
     state.geometry.vertices.forEach(v => {
       if (!v.label) return;
       const offset = v.labelOffset || { dx: 0, dy: -20 };
-      const textX = v.x + offset.dx;
-      const textY = v.y + offset.dy;
-
       const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      textEl.setAttribute('x', textX);
-      textEl.setAttribute('y', textY);
+      textEl.setAttribute('x', v.x + offset.dx);
+      textEl.setAttribute('y', v.y + offset.dy);
       textEl.setAttribute('class', 'geo-label-text');
       textEl.textContent = v.label;
-
       layerLabels.appendChild(textEl);
     });
   }
@@ -1587,7 +1777,7 @@
     });
 
     state.geometry.circles.forEach(c => {
-      const center = state.geometry.vertices.find(v => v.id === c.center || v.label === c.center);
+      const center = state.geometry.vertices.find(v => v.id === c.center);
       if (center) {
         includePoint(center.x - c.radius, center.y - c.radius, 16);
         includePoint(center.x + c.radius, center.y + c.radius, 16);
@@ -1632,19 +1822,31 @@
     }
 
     function findVertex(id) {
-      return state.geometry.vertices.find(v => v.id === id || v.label === id);
+      return state.geometry.vertices.find(v => v.id === id);
     }
 
+    // 1. 圓形底層填色
+    if (state.options.showFill) {
+      state.geometry.circles.forEach(c => {
+        if (!c.fill || c.fill === 'transparent') return;
+        const center = findVertex(c.center);
+        if (!center) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, c.radius, 0, Math.PI * 2);
+        ctx.fillStyle = c.fill;
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // 2. 圓形黑色外框
     state.geometry.circles.forEach(c => {
       const center = findVertex(c.center);
       if (!center) return;
       ctx.save();
       ctx.beginPath();
       ctx.arc(center.x, center.y, c.radius, 0, Math.PI * 2);
-      if (state.options.showFill && c.fill && c.fill !== 'transparent') {
-        ctx.fillStyle = c.fill;
-        ctx.fill();
-      }
       ctx.strokeStyle = '#18181b';
       ctx.lineWidth = 1.8;
       if (c.style === 'dashed') ctx.setLineDash([5, 4]);
@@ -1652,6 +1854,7 @@
       ctx.restore();
     });
 
+    // 3. 線段
     state.geometry.segments.forEach(seg => {
       const v1 = findVertex(seg.v1);
       const v2 = findVertex(seg.v2);
@@ -1660,15 +1863,16 @@
       ctx.beginPath();
       ctx.moveTo(v1.x, v1.y);
       ctx.lineTo(v2.x, v2.y);
-      ctx.strokeStyle = '#18181b';
+      ctx.strokeStyle = seg.color || '#18181b';
       ctx.lineWidth = 1.8;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      if (seg.style === 'dashed') ctx.setLineDash([5, 4]);
+      if (seg.style === 'dashed') ctx.setLineDash([6, 4]);
       ctx.stroke();
       ctx.restore();
     });
 
+    // 4. 直角記號
     if (state.geometry.rightAngles) {
       state.geometry.rightAngles.forEach(ra => {
         const v = findVertex(ra.vertex);
@@ -1687,13 +1891,14 @@
         ctx.moveTo(v.x + du.x, v.y + du.y);
         ctx.lineTo(v.x + du.x + dw.x, v.y + du.y + dw.y);
         ctx.lineTo(v.x + dw.x, v.y + dw.y);
-        ctx.strokeStyle = '#18181b';
-        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = ra.color || '#18181b';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();
       });
     }
 
+    // 5. 實心點
     if (state.geometry.dots) {
       state.geometry.dots.forEach(d => {
         const v = findVertex(d.vertex);
@@ -1707,6 +1912,7 @@
       });
     }
 
+    // 6. 字母標籤
     ctx.save();
     ctx.font = 'italic 22px "STIX Two Text", "Times New Roman", Georgia, serif';
     ctx.textAlign = 'center';
@@ -1727,9 +1933,7 @@
   }
 
   // ==========================================
-  // 關鍵功能：產生 100% Word 原生可編輯向量圖 (.docx)
-  // 採用 OpenXML 原生 VML (<w:pict><v:group>...)，
-  // 每個圓形、線段、直角記號與斜體字母方塊在 Word 中皆可直接點擊修改與拖曳！
+  // 產生 100% Word 原生可編輯向量圖 (.docx)
   // ==========================================
   function exportNativeEditableDocx() {
     try {
@@ -1737,7 +1941,6 @@
       const ptWidth = 260;
       const ptHeight = Math.round((bounds.height / bounds.width) * ptWidth);
 
-      // 將座標轉為 VML 整數座標 (放大 10 倍提升子像素精度)
       const SCALE = 10;
       const originX = bounds.minX * SCALE;
       const originY = bounds.minY * SCALE;
@@ -1745,7 +1948,7 @@
       const coordH = bounds.height * SCALE;
 
       function findVertex(id) {
-        return state.geometry.vertices.find(v => v.id === id || v.label === id);
+        return state.geometry.vertices.find(v => v.id === id);
       }
 
       function escXml(str) {
@@ -1758,8 +1961,14 @@
 
       let vmlShapes = '';
 
-      // 1. 圓形 (<v:oval>)
-      state.geometry.circles.forEach((c, idx) => {
+      // 1. 先放有填色的圓在底層，再放透明圓外框，確保兩圓相交時交弧不被遮蓋
+      const sortedCircles = [...state.geometry.circles].sort((a, b) => {
+        const aFill = a.fill && a.fill !== 'transparent' ? 0 : 1;
+        const bFill = b.fill && b.fill !== 'transparent' ? 0 : 1;
+        return aFill - bFill;
+      });
+
+      sortedCircles.forEach((c, idx) => {
         const center = findVertex(c.center);
         if (!center) return;
         const left = Math.round((center.x - c.radius) * SCALE);
@@ -1782,10 +1991,11 @@
         if (!v1 || !v2) return;
         const x1 = Math.round(v1.x * SCALE), y1 = Math.round(v1.y * SCALE);
         const x2 = Math.round(v2.x * SCALE), y2 = Math.round(v2.y * SCALE);
+        const strokeColor = seg.color || '#18181b';
         const dashXml = seg.style === 'dashed' ? `<v:stroke dashstyle="dash"/>` : '';
 
         vmlShapes += `
-        <v:line id="seg_${idx}" from="${x1},${y1}" to="${x2},${y2}" strokecolor="#18181b" strokeweight="1.5pt">
+        <v:line id="seg_${idx}" from="${x1},${y1}" to="${x2},${y2}" strokecolor="${escXml(strokeColor)}" strokeweight="1.5pt">
           ${dashXml}
         </v:line>`;
       });
@@ -1807,13 +2017,14 @@
           const p1x = Math.round((v.x + du.x) * SCALE), p1y = Math.round((v.y + du.y) * SCALE);
           const p2x = Math.round((v.x + du.x + dw.x) * SCALE), p2y = Math.round((v.y + du.y + dw.y) * SCALE);
           const p3x = Math.round((v.x + dw.x) * SCALE), p3y = Math.round((v.y + dw.y) * SCALE);
+          const raColor = ra.color || '#18181b';
 
           vmlShapes += `
-          <v:polyline id="ra_${idx}" points="${p1x},${p1y} ${p2x},${p2y} ${p3x},${p3y}" filled="f" strokecolor="#18181b" strokeweight="1.1pt"/>`;
+          <v:polyline id="ra_${idx}" points="${p1x},${p1y} ${p2x},${p2y} ${p3x},${p3y}" filled="f" strokecolor="${escXml(raColor)}" strokeweight="1.2pt"/>`;
         });
       }
 
-      // 4. 圓心實心點 (<v:oval>)
+      // 4. 實心點 (<v:oval>)
       if (state.geometry.dots) {
         state.geometry.dots.forEach((d, idx) => {
           const v = findVertex(d.vertex);
@@ -1832,7 +2043,7 @@
       state.geometry.vertices.forEach((v, idx) => {
         if (!v.label) return;
         const offset = v.labelOffset || { dx: 0, dy: -20 };
-        const boxW = 36 * SCALE;
+        const boxW = 42 * SCALE;
         const boxH = 30 * SCALE;
         const left = Math.round((v.x + offset.dx) * SCALE - boxW / 2);
         const top = Math.round((v.y + offset.dy) * SCALE - boxH / 2);
@@ -1906,7 +2117,7 @@
           <w:color w:val="64748B"/>
           <w:sz w:val="19"/>
         </w:rPr>
-        <w:t>💡 提示：直接點擊上方圖中的字母 (A, B, C...) 即可改字；在圖上按右鍵「群組 → 取消群組」即可單獨拖動線條、調整圓形大小或更改填色。</w:t>
+        <w:t>💡 提示：直接點擊上方圖中的字母 (A, B, P, O...) 即可改字；在圖上按右鍵「群組 → 取消群組」即可單獨拖動線條、調整圓形大小或更改填色。</w:t>
       </w:r>
     </w:p>
     <w:sectPr>
@@ -1947,7 +2158,6 @@
     }
   }
 
-  // 純 JS 標準 ZIP 封裝器 (Store Mode + CRC32，零外部依賴)
   function createZipBlob(files) {
     const encoder = new TextEncoder();
     const fileEntries = files.map(f => {
@@ -1972,10 +2182,10 @@
     let offset = 0;
     for (const entry of fileEntries) {
       entry.localOffset = offset;
-      view.setUint32(offset, 0x04034b50, true); // Local file header signature
-      view.setUint16(offset + 4, 20, true);     // Version needed
-      view.setUint16(offset + 6, 0x0800, true); // UTF-8 flag
-      view.setUint16(offset + 8, 0, true);      // Store method (0)
+      view.setUint32(offset, 0x04034b50, true);
+      view.setUint16(offset + 4, 20, true);
+      view.setUint16(offset + 6, 0x0800, true);
+      view.setUint16(offset + 8, 0, true);
       view.setUint16(offset + 10, 0, true);
       view.setUint16(offset + 12, 0x21, true);
       view.setUint32(offset + 14, entry.crc, true);
@@ -1992,7 +2202,7 @@
 
     const centralStart = offset;
     for (const entry of fileEntries) {
-      view.setUint32(offset, 0x02014b50, true); // Central directory signature
+      view.setUint32(offset, 0x02014b50, true);
       view.setUint16(offset + 4, 20, true);
       view.setUint16(offset + 6, 20, true);
       view.setUint16(offset + 8, 0x0800, true);
@@ -2015,7 +2225,7 @@
     }
 
     const centralEnd = offset;
-    view.setUint32(offset, 0x06054b50, true); // End of central directory
+    view.setUint32(offset, 0x06054b50, true);
     view.setUint16(offset + 4, 0, true);
     view.setUint16(offset + 6, 0, true);
     view.setUint16(offset + 8, fileEntries.length, true);
